@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     
+    # Postgres database for SQLAlchemy
+    DATABASE_URL: str = ""
+
     # JWT Auth (Used for local verification if needed, or fallback)
     JWT_SECRET: str = "supersecretjwtkeytiwani2026"
     JWT_ALGORITHM: str = "HS256"

@@ -37,6 +37,7 @@ cp .env.example .env
 - `SUPABASE_URL`
 - `SUPABASE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `DATABASE_URL`
 
 ## Run
 
