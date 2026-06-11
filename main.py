@@ -14,10 +14,11 @@ app = FastAPI(
     openapi_url="/api/openapi.json"
 )
 
-# Set up CORS middleware to allow the frontend to interact with the API
+# Set up CORS middleware to allow the frontend to interact with the API.
+# Origins come from config (CORS_ALLOW_ORIGINS), an explicit allowlist, never "*".
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust in production to frontend domain
+    allow_origins=settings.cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
