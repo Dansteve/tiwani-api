@@ -1,0 +1,23 @@
+# Render Blueprint for tiwani-api (see Docs/Deploy.md, section 1 "Backend on Render").
+# Connect this repo to Render as a Blueprint; Render builds the Dockerfile and runs it.
+# The SUPABASE_* and CORS secrets are set in the Render dashboard (sync: false keeps them
+# out of git). DATABASE_URL is intentionally NOT here: the runtime talks to Supabase over
+# HTTP; DATABASE_URL is only for local migrations and seeding.
+services:
+  - type: web
+    name: tiwani-api
+    runtime: docker          # builds the existing Dockerfile at the repo root
+    plan: free
+    region: frankfurt        # EU; change to match your Supabase project's region
+    healthCheckPath: /        # GET / returns {"status": "healthy"}
+    envVars:
+      - key: DEBUG
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false           # set in the Render dashboard (secret)
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false           # usually leave empty; set only if a path needs service-role
+      - key: CORS_ALLOW_ORIGINS
+        sync: false           # the deployed frontend origins, comma-separated
