@@ -8,11 +8,11 @@ User scoping and RLS (HardRules/Api/Modules/Auth.md, Models.md): every function
 takes the resolved AuthedUser and runs through get_anon_client(user.access_token),
 so PostgREST carries the user's JWT and Row Level Security filters every query to
 that user's rows. Cross-user access cannot return another user's row (RLS makes it
-invisible), which surfaces as 404 at the route. The ONE deliberate service-role
-use is creating the user_profile row on first access: the migration intentionally
-has no insert policy for user_profile (the row is created server-side, keyed to
-auth.uid()), so get_or_create_profile inserts it with the service client, scoped
-explicitly to user.id.
+invisible), which surfaces as 404 at the route. The user_profile row is created on
+first access by the AUTHENTICATED CALLER under RLS: migration 0006 adds an insert
+policy "with check (auth.uid() = id)", so get_or_create_profile inserts the row
+with the user's own token (no service-role key in the request path); id == user.id
+means a profile can only be created for the caller.
 
 Tables: public.user_profile (id == auth.users.id), public.child_profile (one
 active care recipient per user for the MVP; user_id == auth.uid()).
@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
-from app.db import get_anon_client, get_service_client
+from app.db import get_anon_client
 
 USER_PROFILE_TABLE = "user_profile"
 CHILD_PROFILE_TABLE = "child_profile"
@@ -61,8 +61,8 @@ def get_or_create_profile(user: AuthedUser, first_name: Optional[str] = None) ->
     The profile row is keyed to the Supabase Auth user id (id == auth.uid()).
     A first read uses the RLS-scoped anon client; if no row exists yet (the app
     signs the user up via the Supabase Auth SDK, so the api may see a user before
-    a profile row exists), it is created with the service client, scoped to
-    user.id. first_name is required by the table; when the caller does not supply
+    a profile row exists), it is created by the caller under RLS (the insert
+    policy, migration 0006). first_name is required by the table; when the caller does not supply
     one we fall back to the email local-part, then to "Coordinator", so the
     create never violates the not-null constraint.
     """
@@ -79,11 +79,12 @@ def get_or_create_profile(user: AuthedUser, first_name: Optional[str] = None) ->
         "email": user.email,
         "first_name": resolved_first_name,
     }
-    # Service client: the user_profile table has no insert RLS policy by design
-    # (rows are created server-side). Scoped to user.id, so a profile can only be
-    # created for the authenticated caller.
+    # The authenticated caller inserts their OWN profile row under RLS
+    # (user_profile_insert_own, "with check (auth.uid() = id)", migration 0006).
+    # No service-role key in the request path; id == user.id, so a profile can
+    # only ever be created for the caller.
     created = _first(
-        get_service_client().table(USER_PROFILE_TABLE).insert(insert_row).execute()
+        client.table(USER_PROFILE_TABLE).insert(insert_row).execute()
     )
     if created is not None:
         return created

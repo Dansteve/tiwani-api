@@ -49,31 +49,40 @@ def test_get_or_create_returns_existing_profile_without_service_client(monkeypat
     assert captured["anon_token"] == "tok-abc"
 
 
-def test_get_or_create_creates_profile_via_service_client_when_missing(monkeypatch):
+def test_get_or_create_creates_profile_under_rls_when_missing(monkeypatch):
     created = {"id": "u-1", "email": "ada@example.com", "first_name": "ada"}
-    anon = FakeClient({("user_profile", "select"): FakeResponse(None)})
-    service = FakeClient({("user_profile", "insert"): FakeResponse([created])})
-    _patch_clients(monkeypatch, anon, service)
+    anon = FakeClient(
+        {
+            ("user_profile", "select"): FakeResponse(None),
+            ("user_profile", "insert"): FakeResponse([created]),
+        }
+    )
+    _patch_clients(monkeypatch, anon)
 
     result = svc.get_or_create_profile(USER)
 
     assert result["id"] == "u-1"
-    # The insert went through the SERVICE client (RLS bypassed by design) and was
-    # scoped to the caller's id; first_name fell back to the email local-part.
-    insert_call = service.calls[0]
-    assert insert_call["op"] == "insert"
+    # The insert went through the RLS-scoped anon client (the caller's own token,
+    # the user_profile_insert_own policy, migration 0006), scoped to the caller's
+    # id; first_name fell back to the email local-part. No service-role key.
+    insert_call = next(c for c in anon.calls if c["op"] == "insert")
     assert insert_call["payload"]["id"] == "u-1"
     assert insert_call["payload"]["first_name"] == "ada"
 
 
 def test_get_or_create_uses_supplied_first_name(monkeypatch):
-    anon = FakeClient({("user_profile", "select"): FakeResponse(None)})
     created = {"id": "u-1", "first_name": "Bisi"}
-    service = FakeClient({("user_profile", "insert"): FakeResponse([created])})
-    _patch_clients(monkeypatch, anon, service)
+    anon = FakeClient(
+        {
+            ("user_profile", "select"): FakeResponse(None),
+            ("user_profile", "insert"): FakeResponse([created]),
+        }
+    )
+    _patch_clients(monkeypatch, anon)
 
     svc.get_or_create_profile(USER, first_name="Bisi")
-    assert service.calls[0]["payload"]["first_name"] == "Bisi"
+    insert_call = next(c for c in anon.calls if c["op"] == "insert")
+    assert insert_call["payload"]["first_name"] == "Bisi"
 
 
 def test_default_first_name_falls_back_to_coordinator_without_email():
