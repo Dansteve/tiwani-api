@@ -30,3 +30,12 @@ select = ["E", "F", "W", "I"]
 "app/routes/chapters.py" = ["E501", "I001", "W291", "W293"]
 "app/routes/children.py" = ["E501", "I001", "W293"]
 "app/routes/user.py" = ["E501", "I001", "W291", "W293"]
+# The two seed-CONTENT sources are authored prose data, not logic: the scenario
+# matrix carries one ranked strategy sentence per line and the tag architecture
+# carries one rationale sentence per row. Wrapping that prose to 100 chars hurts
+# readability for no quality gain (the same call the project already makes for the
+# data-dense app/models/chapter.py). E501 is exempted ONLY for these two content
+# files; the seed LOGIC (loader.py, models/seed.py) and the tests stay fully
+# linted. Everything except E501 still applies here (imports, unused, whitespace).
+"app/seed/knowledge_base_v1.py" = ["E501"]
+"app/seed/tag_architecture_v1.py" = ["E501"]
