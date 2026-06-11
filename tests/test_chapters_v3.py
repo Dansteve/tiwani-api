@@ -1,12 +1,14 @@
 """No-DB tests for the v3 six-chapter dashboard endpoint and its schema.
 
-The route tests drive the real FastAPI app (main.app) through a TestClient. Auth
-is the only seam: the current-user dependency is overridden with a fixed
-AuthedUser for the authenticated case, and left real for the 401 case (a missing
-token short-circuits the dependency before any Supabase call). The chapters
-service needs no Supabase mock: for a fresh user it reads nothing and builds the
-six-chapter baseline from the fixed Chapter enum, so these run with no live
-Supabase (blocked in the sandbox; the task requires mocking).
+The route tests drive the real FastAPI app (main.app) through a TestClient. Two
+seams: the current-user dependency is overridden with a fixed AuthedUser for the
+authenticated case (left real for the 401 case, which short-circuits before any
+Supabase call), and since Task 5 the chapters service reads the user's
+activity_record rows (for activity_count / last_prepared_at), so the authed
+fixture stubs get_anon_client with a fake returning an empty activity_record
+select. These assert the fresh-user baseline, so the six chapters still come back
+not-started, with no live Supabase (blocked in the sandbox; the task requires
+mocking).
 
 They pin the cross-repo contract for GET /api/v3/chapters: auth required (401),
 exactly the six chapters in a stable order, all null/0 for a fresh user, and the
@@ -22,6 +24,7 @@ from app.models.chapters_v3 import (
     Chapter,
     ChapterStatus,
 )
+from tests.fakes_supabase import FakeClient, FakeResponse
 
 AUTHED = AuthedUser(id="u-1", email="ada@example.com", access_token="tok-abc")
 
@@ -38,9 +41,19 @@ EXPECTED_CHAPTERS = [
 
 
 @pytest.fixture
-def authed(client):
-    """Override the current-user dependency with a fixed authed user."""
+def authed(client, monkeypatch):
+    """Override the current-user dependency and stub the chapters service client.
+
+    Since Task 5, the chapters service reads the user's activity_record rows (to
+    fill activity_count / last_prepared_at), so the authed route tests must mock
+    the Supabase client. These tests assert the FRESH-user baseline, so the fake
+    returns an empty activity_record select: every chapter stays not-started
+    (count 0, no timestamp). The activity-count wiring itself is tested against
+    populated rows in tests/test_plans_routes.py.
+    """
     client.app.dependency_overrides[get_current_user] = lambda: AUTHED
+    fake = FakeClient({("activity_record", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: fake)
     yield client
     client.app.dependency_overrides.pop(get_current_user, None)
 

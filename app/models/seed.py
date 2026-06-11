@@ -49,6 +49,14 @@ MAX_TOTAL = 20  # four dimensions at the 5 ceiling
 MAX_TOTAL_FULL = 8
 MAX_TOTAL_MODIFIED = 13
 
+# The dimension-match threshold (Product.md section 4.4 step 7): the LCE surfaces
+# strategies matched to "high-scoring dimensions (>= 3)". A final dimension score at
+# or above this is treated as high pressure both by the strategy ranker and by the
+# per-dimension explanation banding. Lives here (the model/bounds layer) so the LCE
+# engine reads it as a named bound and never inlines the literal (the SeedData.md
+# hard rule; a pytest guard rejects a numeric literal >= 2 in the LCE source).
+HIGH_DIMENSION_SCORE = 3
+
 
 class Dimension(str, Enum):
     """The four LCE pressure dimensions (Product.md section 4.4)."""

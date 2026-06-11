@@ -7,48 +7,97 @@ engine logic and no status-colour mapping live here: this returns raw inputs, th
 app maps them to the section 4.3 bands.
 
 User scoping (HardRules/Api/Modules/Auth.md): the function takes the resolved
-AuthedUser, so every value it ever reads is scoped to that user. The six chapters
-are a FIXED set (always all six, in a stable order), so the list itself is not
-user-specific; only the per-chapter values are, and they are filled from the
-user's own rows.
+AuthedUser and reads the user's activity_record rows through
+get_anon_client(user.access_token), so Row Level Security scopes every value to
+that user. The six chapters are a FIXED set (always all six, in a stable order),
+so the list itself is not user-specific; only the per-chapter values are.
 
-State today: activity_record (Task 5), the LCI (Task 6), and Erosion Alerts
-(Task 7) do not exist yet, so there is nothing per-user to read and every chapter
-comes back "not started" (lci=null, alert_level=null, last_prepared_at=null,
-activity_count=0): the correct baseline for a fresh user. This is written to fill
-those values in when those tables exist and to TOLERATE an empty result set
-(absent rows leave a chapter at the not-started baseline), so wiring Tasks 5 to 7
-is an additive change here, not a rewrite.
+State (2026-06-11, Task 5 wired): activity_record now EXISTS, so activity_count
+and last_prepared_at are filled from the user's own prepared activities per
+chapter. The LCI (Task 6) and Erosion Alerts (Task 7) tables do not exist yet, so
+lci and alert_level stay null; a chapter with no activities stays at the
+not-started baseline (count 0, no timestamp). Wiring Tasks 6/7 is an additive
+change here (fill lci/alert_level), not a rewrite.
 """
 
 from __future__ import annotations
 
-from typing import List
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.auth import AuthedUser
+from app.db import get_anon_client
 from app.models.chapters_v3 import CHAPTER_DISPLAY_NAMES, Chapter, ChapterStatus
+from app.services.profile import _rows
+
+ACTIVITY_RECORD_TABLE = "activity_record"
 
 
 def list_chapter_statuses(user: AuthedUser) -> List[ChapterStatus]:
     """Return the six fixed Life Chapters for the user, each a ChapterStatus.
 
     Always returns all six chapters in the stable Chapter declaration order
-    (School first), so the dashboard grid is deterministic. For a fresh user
-    every chapter is at the not-started baseline (lci=null, alert_level=null,
-    last_prepared_at=null, activity_count=0).
-
-    The user argument is the scope key: when activity_record / chapter_lci_record
-    / alert_record exist (Tasks 5 to 7), this reads the user's rows (RLS-scoped via
-    get_anon_client(user.access_token)) and fills lci, alert_level,
-    last_prepared_at, and activity_count per chapter, defaulting any chapter with
-    no rows to the baseline. Until then there is nothing to read, so it builds the
-    baseline list directly.
+    (School first), so the dashboard grid is deterministic. activity_count and
+    last_prepared_at are filled from the user's activity_record rows per chapter
+    (RLS-scoped); lci and alert_level are null until Tasks 6/7 land. A chapter with
+    no prepared activities is the not-started baseline (count 0, no timestamp).
     """
-    # user is unused while there are no per-user chapter rows to read; it is part
-    # of the signature so the scoping is in place and Tasks 5 to 7 fill the values
-    # without changing the route or the contract.
-    _ = user
+    counts, last_prepared = _activity_aggregates_by_chapter(user)
     return [
-        ChapterStatus(chapter=chapter, display_name=CHAPTER_DISPLAY_NAMES[chapter])
+        ChapterStatus(
+            chapter=chapter,
+            display_name=CHAPTER_DISPLAY_NAMES[chapter],
+            activity_count=counts.get(chapter.value, 0),
+            last_prepared_at=last_prepared.get(chapter.value),
+        )
         for chapter in Chapter
     ]
+
+
+def _activity_aggregates_by_chapter(
+    user: AuthedUser,
+) -> Tuple[Dict[str, int], Dict[str, Optional[str]]]:
+    """Per chapter: how many activities the user prepared, and the most recent time.
+
+    Reads the user's activity_record rows (chapter + created_at) under RLS and
+    aggregates in Python (the row count is small per user, and grouping here keeps
+    the query a single scoped select rather than per-chapter round trips). Returns
+    (counts_by_chapter_code, last_prepared_at_by_chapter_code); last_prepared_at is
+    the max created_at as the ISO string the row carries (the app formats it).
+    """
+    client = get_anon_client(user.access_token)
+    rows = _rows(
+        client.table(ACTIVITY_RECORD_TABLE)
+        .select("chapter, created_at")
+        .eq("user_id", user.id)
+        .execute()
+    )
+
+    counts: Dict[str, int] = defaultdict(int)
+    last_prepared: Dict[str, Optional[str]] = {}
+    for row in rows:
+        chapter = row.get("chapter")
+        if chapter is None:
+            continue
+        counts[chapter] += 1
+        created_at = _as_iso(row.get("created_at"))
+        if created_at is not None:
+            current = last_prepared.get(chapter)
+            # created_at is an ISO-8601 string; lexical comparison matches
+            # chronological order for a fixed-offset/UTC timestamptz, so the max
+            # string is the most recent prepared time.
+            if current is None or created_at > current:
+                last_prepared[chapter] = created_at
+    return counts, last_prepared
+
+
+def _as_iso(value: Any) -> Optional[str]:
+    """Normalise a created_at value to an ISO-8601 string (or None)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return str(value)

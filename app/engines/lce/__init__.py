@@ -1,32 +1,31 @@
-"""LCE: the Life Continuity Engine. STUB, NO LOGIC YET.
+"""LCE: the Life Continuity Engine (Product.md section 4.4, AUTHORITATIVE).
 
-Authoritative spec: Product.md section 4.4 (AUTHORITATIVE, build to the number).
-Module file: HardRules/Api/Modules/Engine.md. Seed inputs: HardRules/Api/Modules/SeedData.md.
-Data objects: HardRules/Api/Modules/Models.md (activity_record).
+A deterministic, rules-based (not AI) engine. Input: a care recipient profile (the
+support level + permanent tags), a chosen activity and its chapter, and any "today"
+flags. Output: four pressure-dimension scores (temporal, sensory, logistical,
+human; each 1 to 5), a total (4 to 20), a participation tier, ranked strategies,
+and a one-line non-clinical explanation per dimension. Same inputs always produce
+the same output: no AI, no randomness, no clock inside the scoring.
 
-What it will be: a deterministic, rules-based (not AI) function. Input: a care
-recipient profile, a chosen activity, its chapter, and any "today" flags. Output:
-four pressure-dimension scores (temporal, sensory, logistical, human; each 1 to 5),
-a total (4 to 20), a participation tier, and ranked strategies. Same inputs always
-produce the same output: no AI, no randomness, no clock inside the scoring.
+Module file: HardRules/Api/Modules/Engine.md. Seed inputs: SeedData.md. Data
+object: Models.md (activity_record). The engine reads seeded rows through
+app.seed.SeedTables and never hardcodes a score.
 
-The exact sequence to build (Product.md section 4.4, Engine.md):
-  1. base scores from the scenario matrix (seeded rows; custom activity falls back
-     to the chapter average and the plan says so); round to whole numbers
-  2. support multiplier (SL-LOW x1.0, SL-MED x1.2, SL-HIGH x1.4); round; cap each at 5
-  3. permanent tag modifiers (additive; tag contribution per dimension capped at +2);
-     cap each at 5
-  4. "today" flag modifiers (additive); cap each at 5
-  5. total = temporal + sensory + logistical + human (4 to 20)
-  6. tier: 4 to 8 Full Engagement, 9 to 13 Modified Participation, 14 to 20 Continuity Pivot
-  7. rank strategies (Strategies.md): promoted first, dimension >= 3 matches,
-     suppressed excluded, cross-context appended
-  8. store the activity_record and confirm the write
-  9. schedule the Pulse (activity date + 2h, else 09:00 next day)
+Layout:
+  scoring.py       the calc seam: round-after-multiplier + cap-at-5 (the Task 12
+                   score-resolution decision lives behind these two functions).
+  strategies.py    section 4.4 step 7 ranking + the Task 9 promotion/suppression/
+                   cross-context hook.
+  explanations.py  section 4.4 step 10 per-dimension non-clinical sentences.
+  engine.py        run_engine: the section 4.4 steps 1 to 7 + 10, pure.
 
-BLOCKED (SeedData.md Q7): the per-activity base scores and per-tag modifier values
-are seed data that lives in two companion documents NOT in this repo. The engine
-reads seeded rows, never hardcoded scores. Do not fabricate values. Building this
-engine is blocked on the PRODUCT OWNER supplying those documents, then a
-table-driven test pinning every Product.md worked number before it is Done.
+Steps 8 (store the activity_record + confirm the write) and 9 (schedule the Pulse)
+are the persistence/clock steps and live in app/services/plans.py, which calls
+run_engine. Step 11 (recompute the LCI + evaluate alerts on Pulse completion) is
+Tasks 6/7.
 """
+
+from app.engines.lce.engine import EngineResult, run_engine
+from app.engines.lce.strategies import RankedStrategy
+
+__all__ = ["run_engine", "EngineResult", "RankedStrategy"]

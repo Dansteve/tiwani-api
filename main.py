@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import auth, user, children, chapters
-from app.routes import profile_v3, chapters_v3
+from app.routes import profile_v3, chapters_v3, plans
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -37,6 +37,9 @@ app.include_router(chapters.router, prefix="/api/chapters", tags=["Chapters & Tr
 # are replaced in later tasks.
 app.include_router(profile_v3.router, prefix="/api/v3", tags=["v3 Profile & Onboarding"])
 app.include_router(chapters_v3.router, prefix="/api/v3", tags=["v3 Dashboard Chapters"])
+# The Life Continuity Engine endpoints (Product.md section 4.4): prepare a plan and
+# the activity picker. Registered under /api/v3 behind the current-user dependency.
+app.include_router(plans.router, prefix="/api/v3", tags=["v3 Preparation Plan (LCE)"])
 
 @app.get("/")
 async def root():

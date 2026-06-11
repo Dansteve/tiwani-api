@@ -32,6 +32,8 @@ handled, a later migration removes them.
 | File | Adds | Notes |
 | --- | --- | --- |
 | `migrations/0001_foundation.sql` | `user_profile`, `child_profile` (the two stable v3 foundation tables), an index on `child_profile(user_id)`, a shared `set_updated_at()` trigger, and the RLS policies for both | `child_profile` is modelled as a general care recipient per `Docs/Decisions.md` D8 (the name is kept for the MVP). Both tables have RLS enabled with explicit per-operation policies keyed to `auth.uid()`. |
+| `migrations/0002_seed_knowledge_base.sql` | The LCE seed reference tables `scenario_matrix`, `scenario_strategy`, `tag_modifier` (the scenario base scores + ranked strategies + per-tag dimension modifiers the engine reads), with CHECK constraints incl. the `temporal+sensory+logistical+human = stated_total` transcription guard | GLOBAL reference data, not user data: RLS enabled but read-for-authenticated, write-for-none (the versioned seed loader writes with the service-role key). Rows are written by `app/seed/write_seed_to_db`. |
+| `migrations/0003_activity_record.sql` | `activity_record` (the stored LCE plan: base + final scores, total, tier, today flags, ranked strategies JSON, `scheduled_pulse_at`, optional `context_note`), indexes on `(user_id, chapter)` and `child_id`, a `total = sum of the four cells` check, the shared `set_updated_at` trigger, and RLS policies | USER data: RLS enabled with explicit per-operation policies keyed to `auth.uid()` (same pattern as `child_profile`). Written by `app/services/plans.py` (LCE step 8). |
 
 ## Applying with the Supabase CLI (once a dev project exists)
 
