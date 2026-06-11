@@ -8,6 +8,7 @@ services:
     name: tiwani-api
     runtime: docker          # builds the existing Dockerfile at the repo root
     plan: free
+    autoDeploy: true         # deploy on every push to the connected branch (main)
     region: frankfurt        # EU; change to match your Supabase project's region
     healthCheckPath: /        # GET / returns {"status": "healthy"}
     envVars:
