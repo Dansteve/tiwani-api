@@ -12,13 +12,13 @@ get_anon_client(user.access_token), so Row Level Security scopes every value to
 that user. The six chapters are a FIXED set (always all six, in a stable order),
 so the list itself is not user-specific; only the per-chapter values are.
 
-State (2026-06-11, Task 6 wired): activity_record (Task 5) and pulse_record (Task 6)
-now EXIST, so activity_count and last_prepared_at come from the user's prepared
-activities per chapter, and lci is the chapter's Life Continuity Index (section 4.8)
-once a chapter has at least one pulse (null before that). The Erosion Alerts table
-is Task 7, so alert_level stays null. A chapter with no activities is the not-started
-baseline (count 0, no timestamp, no LCI). Wiring Task 7 is an additive change here
-(fill alert_level), not a rewrite.
+State (2026-06-11, Task 7 wired): activity_record (Task 5), pulse_record + lci_snapshot
+(Task 6), and alert_record (Task 7) all EXIST, so activity_count and last_prepared_at
+come from the user's prepared activities per chapter, lci is the chapter's Life
+Continuity Index (section 4.8) once a chapter has at least one pulse (null before
+that), and alert_level is the chapter's ACTIVE (non-dismissed) Erosion Alert level
+(section 4.9, from alerts_service) or null when none is raised. A chapter with no
+activities is the not-started baseline (count 0, no timestamp, no LCI, no alert).
 
 The LCI value comes from the SAME fold the LCI dashboard uses (lci_service), so the
 chapter card and the LCI dashboard always agree; this service never does index math.
@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.auth import AuthedUser
 from app.db import get_anon_client
 from app.models.chapters_v3 import CHAPTER_DISPLAY_NAMES, Chapter, ChapterStatus
+from app.services import alerts as alerts_service
 from app.services import lci as lci_service
 from app.services.profile import _rows
 
@@ -45,17 +46,20 @@ def list_chapter_statuses(user: AuthedUser) -> List[ChapterStatus]:
     (School first), so the dashboard grid is deterministic. activity_count and
     last_prepared_at are filled from the user's activity_record rows per chapter
     (RLS-scoped); lci is the chapter's section 4.8 index once it has a pulse (null
-    before), from the shared lci_service fold; alert_level is null until Task 7. A
-    chapter with no prepared activities is the not-started baseline (count 0, no
-    timestamp, no LCI).
+    before), from the shared lci_service fold; alert_level is the chapter's active
+    section 4.9 Erosion Alert level (null when none), from the shared alerts_service.
+    A chapter with no prepared activities is the not-started baseline (count 0, no
+    timestamp, no LCI, no alert).
     """
     counts, last_prepared = _activity_aggregates_by_chapter(user)
     lci_by_chapter = lci_service.chapter_scores_by_code(user)
+    alert_levels = alerts_service.active_levels_by_chapter(user)
     return [
         ChapterStatus(
             chapter=chapter,
             display_name=CHAPTER_DISPLAY_NAMES[chapter],
             lci=lci_by_chapter.get(chapter.value),
+            alert_level=alert_levels.get(chapter.value),
             activity_count=counts.get(chapter.value, 0),
             last_prepared_at=last_prepared.get(chapter.value),
         )

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import auth, user, children, chapters
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci
+from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -46,6 +46,10 @@ app.include_router(pulses.router, prefix="/api/v3", tags=["v3 Pulse (post-activi
 # The Life Continuity Index (section 4.8): the overall and per-chapter resilience
 # scores the dashboard reads. Registered under /api/v3 behind current-user.
 app.include_router(lci.router, prefix="/api/v3", tags=["v3 Life Continuity Index"])
+# The Erosion Alerts (section 4.9, GOVERNED copy, psychiatrist sign-off gated, Task
+# 12): list the active alerts and dismiss one. Evaluated server-side after every
+# pulse. Registered under /api/v3 behind current-user.
+app.include_router(alerts.router, prefix="/api/v3", tags=["v3 Erosion Alerts"])
 
 @app.get("/")
 async def root():

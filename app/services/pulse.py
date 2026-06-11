@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from app.auth import AuthedUser
 from app.db import get_anon_client
 from app.models.pulse import PendingPulse, PulseRecord
+from app.services import alerts as alerts_service
 from app.services import lci as lci_service
 from app.services.profile import _first, _rows
 
@@ -63,8 +64,10 @@ def record_pulse(
       2. INSERT the pulse_record (outcome, challenge dimension, the stored tier +
          chapter, timestamp) and confirm the write.
       3. recompute the chapter LCI and write a snapshot (lci_service), within 10s.
-         (Task 7 alert evaluation and Task 9 strategy counts slot in after this.)
-      4. return the stored PulseRecord the app renders.
+      4. evaluate Erosion Alerts for the chapter (alerts_service, section 4.9),
+         non-interrupting (a failure never fails the recorded pulse). Task 9 strategy
+         counts slot in after this.
+      5. return the stored PulseRecord the app renders.
 
     now is injectable for tests (the snapshot's taken_at); it defaults to UTC now and
     is the only clock the flow uses.
@@ -90,10 +93,15 @@ def record_pulse(
         now=base_now,
     )
 
-    # Section 4.7 step 2: recompute the chapter LCI and snapshot it (within 10s). The
-    # alert evaluation (step 3, Task 7) and the strategy outcome counts (step 4,
-    # Task 9) hook in here, after the LCI is current.
+    # Section 4.7 step 2: recompute the chapter LCI and snapshot it (within 10s).
     lci_service.recompute_chapter_lci(user, chapter, now=base_now)
+
+    # Section 4.9 (Task 7): evaluate Erosion Alerts for the chapter AFTER the LCI is
+    # current (the alert reads the new score + snapshot history). Non-interrupting: the
+    # _safe wrapper logs and swallows any failure so the recorded pulse is never lost
+    # to an alerting problem (the alert is a background signal, KB 1.6). The Task 9
+    # strategy outcome counts slot in after this.
+    alerts_service.evaluate_chapter_alert_safe(user, chapter, now=base_now)
 
     return _to_pulse_record(stored, chapter=chapter, tier_recommended=tier_recommended)
 

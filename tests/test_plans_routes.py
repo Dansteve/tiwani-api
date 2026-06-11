@@ -334,6 +334,10 @@ def test_chapters_service_counts_activities_and_last_prepared(monkeypatch):
     # every chapter's lci stays null (a plan made, no Pulse yet, reads as no LCI).
     lci_fake = FakeClient({("pulse_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
+    # Since Task 7, the dashboard also reads the user's active alerts. No alert rows
+    # here, so alert_level stays null on every chapter.
+    alerts_fake = FakeClient({("alert_record", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: alerts_fake)
 
     statuses = chapters_service.list_chapter_statuses(AUTHED)
     by_chapter = {s.chapter: s for s in statuses}
@@ -345,7 +349,7 @@ def test_chapters_service_counts_activities_and_last_prepared(monkeypatch):
     # The other chapters stay at the not-started baseline.
     assert by_chapter["school"].activity_count == 0
     assert by_chapter["school"].last_prepared_at is None
-    # LCI is null with no pulse; alert level stays null (Task 7).
+    # LCI is null with no pulse; alert level is null with no active alert.
     assert by_chapter["travel"].lci is None
     assert by_chapter["travel"].alert_level is None
 
@@ -355,10 +359,13 @@ def test_chapters_service_fresh_user_stays_all_not_started(monkeypatch):
     monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: fake)
     lci_fake = FakeClient({("pulse_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
+    alerts_fake = FakeClient({("alert_record", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: alerts_fake)
     statuses = chapters_service.list_chapter_statuses(AUTHED)
     assert len(statuses) == 6
     for s in statuses:
         assert s.activity_count == 0
         assert s.last_prepared_at is None
+        assert s.alert_level is None
         assert s.lci is None
         assert s.alert_level is None

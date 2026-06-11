@@ -145,6 +145,26 @@ def test_create_pulse_rejects_an_unknown_outcome_422(authed):
 # ---------------------------------------------------------------------------
 
 
+def _alerts_fake_quiet():
+    """A FakeClient for the post-pulse alert hook that yields NO alert (quiet).
+
+    The Pulse service now evaluates Erosion Alerts after the LCI recompute (Task 7,
+    section 4.9), through app.services.alerts (its own get_anon_client). For the
+    pulse-WRITE tests, which assert the pulse + snapshot writes (not alerting), the
+    alert hook is pointed here: empty activity / pulse / snapshot / alert reads mean
+    the engine computes no level and nothing is written. This keeps the hook a real,
+    exercised, non-interrupting step without coupling the assertions to alert state.
+    """
+    return FakeClient(
+        {
+            ("activity_record", "select"): FakeResponse([]),
+            ("pulse_record", "select"): FakeResponse([]),
+            ("lci_snapshot", "select"): FakeResponse([]),
+            ("alert_record", "select"): FakeResponse([]),
+        }
+    )
+
+
 def _fake_for_pulse_write():
     """Script the activity read, the no-existing-pulse check, the pulse insert, and
     the snapshot insert. The post-insert recompute re-reads pulse_record (select):
@@ -186,6 +206,9 @@ def test_record_pulse_reads_stored_tier_and_writes_pulse_and_snapshot(monkeypatc
     fake = _fake_for_pulse_write()
     monkeypatch.setattr("app.services.pulse.get_anon_client", lambda token=None: fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr(
+        "app.services.alerts.get_anon_client", lambda token=None: _alerts_fake_quiet()
+    )
 
     record = pulse_service.record_pulse(
         AUTHED,
@@ -274,6 +297,9 @@ def test_skipped_pulse_records_with_zero_effect_score(monkeypatch):
     )
     monkeypatch.setattr("app.services.pulse.get_anon_client", lambda token=None: fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr(
+        "app.services.alerts.get_anon_client", lambda token=None: _alerts_fake_quiet()
+    )
 
     pulse_service.record_pulse(AUTHED, activity_id="act-1", outcome_code="skipped", now=NOW)
 
@@ -477,12 +503,15 @@ def test_chapters_dashboard_now_returns_the_real_lci(monkeypatch):
     ]
     chapters_fake = FakeClient({("activity_record", "select"): FakeResponse(activity_rows)})
     lci_fake = FakeClient({("pulse_record", "select"): FakeResponse(pulse_rows)})
+    # Since Task 7, the dashboard reads the user's active alerts too; none here.
+    alerts_fake = FakeClient({("alert_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: chapters_fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
+    monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: alerts_fake)
 
     statuses = {s.chapter: s for s in chapters_service.list_chapter_statuses(AUTHED)}
     assert statuses["travel"].activity_count == 1
     assert statuses["travel"].lci == 57  # the now-live section 4.8 score
-    assert statuses["travel"].alert_level is None  # still Task 7
+    assert statuses["travel"].alert_level is None  # no active alert raised
     # A chapter with no pulse stays null (not 0).
     assert statuses["school"].lci is None
