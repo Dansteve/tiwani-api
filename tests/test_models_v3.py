@@ -135,6 +135,33 @@ def test_child_profile_update_is_all_optional():
     assert ChildProfileUpdate().model_dump(exclude_unset=True) == {}
 
 
+def test_child_profile_rejects_two_communication_tags():
+    # Communication is single-select (SeedData.md): at most one CM- tag on create.
+    with pytest.raises(ValidationError):
+        ChildProfileCreate(name="Sam", tags=["CM-MIXED", "CM-VERBAL"])
+
+
+def test_child_profile_rejects_two_recovery_tags():
+    # Recovery is single-select: at most one RC- tag.
+    with pytest.raises(ValidationError):
+        ChildProfileCreate(name="Sam", tags=["RC-SHORT", "RC-EXT"])
+
+
+def test_child_profile_allows_many_sensory_and_transition_tags():
+    # Sensory and Transitions are multi-select; the combined 10-cap is UI-only,
+    # so the model accepts several of them plus one CM and one RC.
+    profile = ChildProfileCreate(
+        name="Sam",
+        tags=["SN-NOISE", "SN-CROWD", "SN-LIGHT", "TR-CHANGE", "TR-WAIT", "CM-MIXED", "RC-VAR"],
+    )
+    assert len(profile.tags) == 7
+
+
+def test_child_profile_update_rejects_single_select_violation():
+    with pytest.raises(ValidationError):
+        ChildProfileUpdate(tags=["CM-MIXED", "CM-AAC"])
+
+
 def test_child_profile_full_shape_includes_user_id():
     now = datetime.now(timezone.utc)
     profile = ChildProfile(

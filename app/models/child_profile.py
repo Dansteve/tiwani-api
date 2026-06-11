@@ -22,7 +22,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SupportLevelCode(str, Enum):
@@ -78,6 +78,26 @@ class Tag(str, Enum):
     RC_VAR = "RC-VAR"
 
 
+def validate_single_select_tags(tags: List[Tag]) -> List[Tag]:
+    """Enforce that Communication and Recovery are single-select (SeedData.md).
+
+    Sensory (SN-) and Transitions (TR-) are multi-select; Communication (CM-) and
+    Recovery (RC-) are single-select families, so at most one tag from each may be
+    present. The Sensory + Transitions combined max-10 cap is UI-only (the table
+    stores every selected tag), so it is not enforced here. Reused by every write
+    path (care-recipient create/update and the onboarding payload) so the rule is
+    defined once and holds everywhere. Raises ValueError (a 422 at the route) on a
+    violation.
+    """
+    cm = [t for t in tags if t.value.startswith("CM-")]
+    rc = [t for t in tags if t.value.startswith("RC-")]
+    if len(cm) > 1:
+        raise ValueError("Communication is single-select: at most one CM- tag")
+    if len(rc) > 1:
+        raise ValueError("Recovery is single-select: at most one RC- tag")
+    return tags
+
+
 class ChildProfileBase(BaseModel):
     """Fields a client may set on a care recipient."""
 
@@ -85,6 +105,11 @@ class ChildProfileBase(BaseModel):
     age_band: Optional[str] = None
     support_level_code: Optional[SupportLevelCode] = None
     tags: List[Tag] = Field(default_factory=list)
+
+    @field_validator("tags")
+    @classmethod
+    def _single_select_families(cls, tags: List[Tag]) -> List[Tag]:
+        return validate_single_select_tags(tags)
 
 
 class ChildProfileCreate(ChildProfileBase):
@@ -103,6 +128,13 @@ class ChildProfileUpdate(BaseModel):
     age_band: Optional[str] = None
     support_level_code: Optional[SupportLevelCode] = None
     tags: Optional[List[Tag]] = None
+
+    @field_validator("tags")
+    @classmethod
+    def _single_select_families(cls, tags: Optional[List[Tag]]) -> Optional[List[Tag]]:
+        if tags is None:
+            return tags
+        return validate_single_select_tags(tags)
 
 
 class ChildProfile(ChildProfileBase):

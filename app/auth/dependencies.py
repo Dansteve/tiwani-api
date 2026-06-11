@@ -29,9 +29,8 @@ This module is import-safe and makes no network call at import time; the call to
 Supabase happens only inside the dependency, per request.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -53,12 +52,12 @@ class AuthedUser:
     """
 
     id: str
-    email: str | None
+    email: Optional[str]
     access_token: str
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> AuthedUser:
     """Resolve the bearer token to the current user, or raise 401.
 
