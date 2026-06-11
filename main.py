@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import auth, user, children, chapters
-from app.routes import profile_v3, chapters_v3, plans
+from app.routes import profile_v3, chapters_v3, plans, pulses, lci
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -40,6 +40,12 @@ app.include_router(chapters_v3.router, prefix="/api/v3", tags=["v3 Dashboard Cha
 # The Life Continuity Engine endpoints (Product.md section 4.4): prepare a plan and
 # the activity picker. Registered under /api/v3 behind the current-user dependency.
 app.include_router(plans.router, prefix="/api/v3", tags=["v3 Preparation Plan (LCE)"])
+# The Pulse (section 4.7): record a post-activity outcome (which recomputes the LCI)
+# and list the pending check-ins. Registered under /api/v3 behind current-user.
+app.include_router(pulses.router, prefix="/api/v3", tags=["v3 Pulse (post-activity)"])
+# The Life Continuity Index (section 4.8): the overall and per-chapter resilience
+# scores the dashboard reads. Registered under /api/v3 behind current-user.
+app.include_router(lci.router, prefix="/api/v3", tags=["v3 Life Continuity Index"])
 
 @app.get("/")
 async def root():

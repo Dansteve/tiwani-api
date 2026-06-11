@@ -1,25 +1,30 @@
-"""Pulse: post-activity check-in. STUB, NO LOGIC YET.
+"""Pulse: the post-activity check-in (Product.md section 4.7).
 
-Spec: Product.md section 4.7. Module file: HardRules/Api/Modules/Pulse.md.
-Data objects: HardRules/Api/Modules/Models.md (pulse_record).
+The two-tap outcome capture (outcome Well / Okay / Difficult, then the main
+challenge dimension) that feeds the LCI and (Task 7) the alerts. Module file:
+HardRules/Api/Modules/Pulse.md. Data object: Models.md (pulse_record, migration
+0004).
 
-What it will be: a two-tap outcome capture (outcome Well/Okay/Difficult, then the
-main challenge dimension; both required), meant to take under 10 seconds.
+Where the code lives (the Task 5 split between pure engines and the data/clock
+layer is kept): the Pulse has no pure SCORING of its own (the index math is the LCI
+engine, app/engines/lci), so its recording + orchestration is the data layer in
+app/services/pulse.py, which:
+  1. reads the caller's activity_record (the STORED chapter + recommended tier; the
+     tier is never re-derived here, the Pulse hard rule),
+  2. enforces one pulse per activity (a duplicate is a 409),
+  3. writes the pulse_record (outcome, challenge dimension, stored tier + chapter),
+  4. recomputes the chapter LCI and snapshots it (section 4.8, within 10 seconds),
+  5. exposes the pending Pulses (scheduled time passed, no pulse yet).
 
-Scheduling is set by the LCE (section 4.4 step 9): activity date + 2 hours, or
-09:00 the next day if no date. The api owns the schedule and trigger.
+The Erosion Alert evaluation (section 4.7 step 3) and the Strategy Library outcome
+counts (step 4) are Tasks 7 and 9; they hook in after the LCI is recomputed (the
+seam is marked in app/services/pulse.py).
 
-On completion the api, in this order (do not move into the app):
-  1. writes the pulse_record (outcome_code, challenge_dimension, the stored
-     tier_recommended and chapter, timestamp)
-  2. recalculates the chapter LCI (Index.md) using outcome x the STORED recommended
-     tier (never re-derived), within 10 seconds
-  3. evaluates Erosion Alerts for that chapter (Alerts.md)
-  4. updates the Strategy Library outcome counts (Strategies.md)
-
-A Pulse persists across dashboard opens until completed or dismissed twice; after
-the second dismiss it is recorded as skipped, a 0 adjustment to the LCI (never a
-penalty).
-
-BLOCKED behind the LCE/LCI/Alerts it triggers (SeedData.md Q7).
+This package re-exports the service's typed errors so a route can import the Pulse
+contract from one place; the recording entry points are record_pulse and
+list_pending_pulses in app/services/pulse.py.
 """
+
+from app.services.pulse import ActivityNotFoundError, AlreadyPulsedError
+
+__all__ = ["ActivityNotFoundError", "AlreadyPulsedError"]

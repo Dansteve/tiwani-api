@@ -42,18 +42,22 @@ EXPECTED_CHAPTERS = [
 
 @pytest.fixture
 def authed(client, monkeypatch):
-    """Override the current-user dependency and stub the chapters service client.
+    """Override the current-user dependency and stub the chapters service clients.
 
     Since Task 5, the chapters service reads the user's activity_record rows (to
-    fill activity_count / last_prepared_at), so the authed route tests must mock
-    the Supabase client. These tests assert the FRESH-user baseline, so the fake
-    returns an empty activity_record select: every chapter stays not-started
-    (count 0, no timestamp). The activity-count wiring itself is tested against
-    populated rows in tests/test_plans_routes.py.
+    fill activity_count / last_prepared_at); since Task 6 it also reads the user's
+    pulse_record rows through the LCI service (to fill the chapter LCI). So the
+    authed route tests mock BOTH Supabase clients. These tests assert the FRESH-user
+    baseline, so the fakes return an empty activity_record select and an empty
+    pulse_record select: every chapter stays not-started (count 0, no timestamp, no
+    LCI). The populated wiring is tested against rows in tests/test_plans_routes.py
+    and tests/test_pulse_lci_routes.py.
     """
     client.app.dependency_overrides[get_current_user] = lambda: AUTHED
-    fake = FakeClient({("activity_record", "select"): FakeResponse([])})
-    monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: fake)
+    chapters_fake = FakeClient({("activity_record", "select"): FakeResponse([])})
+    lci_fake = FakeClient({("pulse_record", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: chapters_fake)
+    monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
     yield client
     client.app.dependency_overrides.pop(get_current_user, None)
 
