@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Tiwani API"
     DEBUG: bool = True
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8002
     
     # Supabase config
     SUPABASE_URL: str = ""
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # CORS allowed origins as a comma-separated string from the environment.
     # Defaults to the local app and website dev origins. Read the parsed list
     # via the cors_allow_origins property.
-    CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+    CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174"
 
     @computed_field
     @property
