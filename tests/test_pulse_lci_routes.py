@@ -34,8 +34,16 @@ from tests.fakes_supabase import FakeClient, FakeResponse
 NOW = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
 AUTHED = AuthedUser(id="u-1", email="ada@example.com", access_token="tok-abc")
 
-# A stored activity_record the Pulse reads its chapter + tier from.
-ACTIVITY_ROW = {"id": "act-1", "chapter": "travel", "tier": "Modified"}
+# The caller's sole care recipient. The per-recipient reads resolve it through
+# profile.resolve_child_id, which reads child_profile when no explicit child_id is given,
+# so the LCI / dashboard fakes script this child_profile select. The pulse fold then scopes
+# every pulse/snapshot read to this child_id (Docs/FeatureDecisions.md, multi care recipient).
+CHILD_ID = "ch-1"
+CHILD_ROW = {"id": CHILD_ID, "user_id": "u-1", "name": "Sam"}
+
+# A stored activity_record the Pulse reads its chapter + tier + child_id from (the pulse
+# carries its activity's recipient; it does not go through the resolver).
+ACTIVITY_ROW = {"id": "act-1", "chapter": "travel", "tier": "Modified", "child_id": CHILD_ID}
 
 
 @pytest.fixture
@@ -223,24 +231,41 @@ def test_record_pulse_reads_stored_tier_and_writes_pulse_and_snapshot(monkeypatc
     assert record.chapter == "travel"
     assert record.outcome_code == "well"
 
-    # A pulse_record INSERT was issued, scoped to the user, carrying the stored tier.
+    # A pulse_record INSERT was issued, scoped to the user, carrying the stored tier and
+    # the activity's OWN recipient (child_id), so the per-recipient LCI fold reads it.
     pulse_inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "pulse_record"]
     assert len(pulse_inserts) == 1
     payload = pulse_inserts[0]["payload"]
     assert payload["user_id"] == "u-1"
     assert payload["activity_id"] == "act-1"
+    assert payload["child_id"] == CHILD_ID
     assert payload["chapter"] == "travel"
     assert payload["tier_recommended"] == "Modified"
     assert payload["outcome_code"] == "well"
 
     # The post-pulse recompute wrote an lci_snapshot with the new chapter score
-    # (50 + 7 = 57 for Well on a Modified activity).
+    # (50 + 7 = 57 for Well on a Modified activity), carrying the same recipient.
     snap_inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "lci_snapshot"]
     assert len(snap_inserts) == 1
     snap = snap_inserts[0]["payload"]
     assert snap["user_id"] == "u-1"
+    assert snap["child_id"] == CHILD_ID
     assert snap["chapter"] == "travel"
     assert snap["score"] == 57
+
+    # Isolation: every pulse/snapshot read in the recompute was scoped to this ONE
+    # recipient, and the writes carry it; no read or write addressed any other child_id.
+    scoped_ops = [
+        c for c in fake.calls if c["table"] in ("pulse_record", "lci_snapshot")
+    ]
+    for call in scoped_ops:
+        if call["op"] in ("select", "insert"):
+            seen = {v for (col, v) in call["filters"] if col == "child_id"}
+            if call["op"] == "insert":
+                payload_child = (call["payload"] or {}).get("child_id")
+                if payload_child:
+                    seen.add(payload_child)
+            assert seen <= {CHILD_ID}, f"a {call['table']} {call['op']} touched another recipient"
 
 
 def test_record_pulse_unknown_activity_raises(monkeypatch):
@@ -380,13 +405,23 @@ def test_chapter_lci_list_folds_scripted_pulses(monkeypatch):
     ]
     fake = FakeClient(
         {
+            # resolve_child_id reads the sole child first (no explicit child_id given).
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
             ("pulse_record", "select"): FakeResponse(pulses),
             ("lci_snapshot", "select"): FakeResponse([]),  # no prior snapshots
         }
     )
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    # The resolver lives in app.services.profile and uses ITS client; point it at the
+    # same fake so the sole-child read is served (one RLS-scoped client per request).
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
 
     chapters = {c.chapter: c for c in lci_service.chapter_lci_list(AUTHED, now=NOW)}
+
+    # Every pulse/snapshot read was scoped to the resolved recipient (the isolation rule).
+    for call in fake.calls:
+        if call["table"] in ("pulse_record", "lci_snapshot") and call["op"] == "select":
+            assert ("child_id", CHILD_ID) in call["filters"]
 
     assert chapters["travel"].score == 62
     assert chapters["travel"].pulse_count == 2
@@ -426,11 +461,13 @@ def test_overall_lci_excludes_no_data_chapters(monkeypatch):
     ]
     fake = FakeClient(
         {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
             ("pulse_record", "select"): FakeResponse(pulses),
             ("lci_snapshot", "select"): FakeResponse([]),
         }
     )
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
 
     overall = lci_service.overall_lci(AUTHED, now=NOW)
     assert overall.score == 52  # mean(62, 42)
@@ -438,18 +475,50 @@ def test_overall_lci_excludes_no_data_chapters(monkeypatch):
 
 
 def test_overall_lci_is_null_for_a_fresh_user(monkeypatch):
+    # A fresh user with NO care recipient yet: resolve_child_id returns None, so the fold
+    # reads nothing and the overall is null (no pulse/snapshot query is even issued).
     fake = FakeClient(
         {
+            ("child_profile", "select"): FakeResponse([]),
             ("pulse_record", "select"): FakeResponse([]),
             ("lci_snapshot", "select"): FakeResponse([]),
         }
     )
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
     overall = lci_service.overall_lci(AUTHED, now=NOW)
     assert overall.score is None
     assert overall.chapters_included == []
     assert overall.label == "--"
     assert overall.trajectory == "building_picture"
+    # No recipient: the per-recipient reads were skipped entirely (no data pooled).
+    assert not any(
+        c["table"] in ("pulse_record", "lci_snapshot") for c in fake.calls
+    )
+
+
+def test_overall_lci_is_null_for_an_onboarded_user_with_no_pulses(monkeypatch):
+    # The other fresh state: a recipient EXISTS but has recorded no pulses yet. The
+    # resolver finds the child, the per-recipient fold is empty, the overall is null.
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("pulse_record", "select"): FakeResponse([]),
+            ("lci_snapshot", "select"): FakeResponse([]),
+        }
+    )
+    monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    overall = lci_service.overall_lci(AUTHED, now=NOW)
+    assert overall.score is None
+    assert overall.chapters_included == []
+    # The pulse read that DID run was scoped to the recipient.
+    pulse_selects = [
+        c for c in fake.calls if c["table"] == "pulse_record" and c["op"] == "select"
+    ]
+    assert pulse_selects and all(
+        ("child_id", CHILD_ID) in c["filters"] for c in pulse_selects
+    )
 
 
 def test_chapter_trajectory_uses_the_seven_day_prior_snapshot(monkeypatch):
@@ -471,11 +540,13 @@ def test_chapter_trajectory_uses_the_seven_day_prior_snapshot(monkeypatch):
     ]
     fake = FakeClient(
         {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
             ("pulse_record", "select"): FakeResponse(pulses),
             ("lci_snapshot", "select"): FakeResponse(snapshots),
         }
     )
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
 
     chapters = {c.chapter: c for c in lci_service.chapter_lci_list(AUTHED, now=NOW)}
     assert chapters["travel"].score == 71
@@ -501,13 +572,22 @@ def test_chapters_dashboard_now_returns_the_real_lci(monkeypatch):
             "created_at": "2026-06-11T09:00:00+00:00",
         }
     ]
-    chapters_fake = FakeClient({("activity_record", "select"): FakeResponse(activity_rows)})
+    # The dashboard resolves the sole recipient first (chapters' own client), then scopes
+    # the activity counts, the LCI fold, and the alert levels to that one child_id.
+    chapters_fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("activity_record", "select"): FakeResponse(activity_rows),
+        }
+    )
     lci_fake = FakeClient({("pulse_record", "select"): FakeResponse(pulse_rows)})
     # Since Task 7, the dashboard reads the user's active alerts too; none here.
     alerts_fake = FakeClient({("alert_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: chapters_fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: alerts_fake)
+    # The resolver (profile layer) reads the sole child; serve it from chapters_fake.
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: chapters_fake)
 
     statuses = {s.chapter: s for s in chapters_service.list_chapter_statuses(AUTHED)}
     assert statuses["travel"].activity_count == 1
@@ -515,3 +595,14 @@ def test_chapters_dashboard_now_returns_the_real_lci(monkeypatch):
     assert statuses["travel"].alert_level is None  # no active alert raised
     # A chapter with no pulse stays null (not 0).
     assert statuses["school"].lci is None
+
+    # Isolation: the activity, pulse, and alert reads were all scoped to the SAME recipient.
+    assert ("child_id", CHILD_ID) in next(
+        c for c in chapters_fake.calls if c["table"] == "activity_record"
+    )["filters"]
+    assert ("child_id", CHILD_ID) in next(
+        c for c in lci_fake.calls if c["table"] == "pulse_record"
+    )["filters"]
+    assert ("child_id", CHILD_ID) in next(
+        c for c in alerts_fake.calls if c["table"] == "alert_record"
+    )["filters"]

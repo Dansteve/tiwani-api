@@ -327,8 +327,16 @@ def test_chapters_service_counts_activities_and_last_prepared(monkeypatch):
         {"chapter": "travel", "created_at": "2026-06-11T09:00:00+00:00"},
         {"chapter": "social", "created_at": "2026-06-09T09:00:00+00:00"},
     ]
-    fake = FakeClient({("activity_record", "select"): FakeResponse(rows)})
+    # The dashboard resolves the sole recipient first (profile layer, served from the
+    # chapters client) and scopes the activity read to that child_id.
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("activity_record", "select"): FakeResponse(rows),
+        }
+    )
     monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
     # Since Task 6, the dashboard also folds the user's pulses for the chapter LCI.
     # This case has activities but no pulses yet, so the LCI client returns none and
     # every chapter's lci stays null (a plan made, no Pulse yet, reads as no LCI).
@@ -352,11 +360,22 @@ def test_chapters_service_counts_activities_and_last_prepared(monkeypatch):
     # LCI is null with no pulse; alert level is null with no active alert.
     assert by_chapter["travel"].lci is None
     assert by_chapter["travel"].alert_level is None
+    # The activity read was scoped to the resolved recipient (the isolation rule).
+    assert ("child_id", CHILD_ROW["id"]) in next(
+        c for c in fake.calls if c["table"] == "activity_record"
+    )["filters"]
 
 
 def test_chapters_service_fresh_user_stays_all_not_started(monkeypatch):
-    fake = FakeClient({("activity_record", "select"): FakeResponse([])})
+    # No recipient yet: the resolver returns None, the per-recipient reads are skipped.
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([]),
+            ("activity_record", "select"): FakeResponse([]),
+        }
+    )
     monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
     lci_fake = FakeClient({("pulse_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
     alerts_fake = FakeClient({("alert_record", "select"): FakeResponse([])})

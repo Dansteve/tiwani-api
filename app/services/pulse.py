@@ -62,12 +62,17 @@ def record_pulse(
       1. reject a duplicate: a Pulse already recorded for this activity =>
          AlreadyPulsedError (409). One pulse per activity (section 4.7).
       2. INSERT the pulse_record (outcome, challenge dimension, the stored tier +
-         chapter, timestamp) and confirm the write.
-      3. recompute the chapter LCI and write a snapshot (lci_service), within 10s.
-      4. evaluate Erosion Alerts for the chapter (alerts_service, section 4.9),
-         non-interrupting (a failure never fails the recorded pulse). Task 9 strategy
-         counts slot in after this.
+         chapter + child_id, timestamp) and confirm the write.
+      3. recompute THIS recipient's chapter LCI and write a snapshot (lci_service),
+         within 10s.
+      4. evaluate Erosion Alerts for this recipient's chapter (alerts_service, section
+         4.9), non-interrupting (a failure never fails the recorded pulse). Task 9
+         strategy counts slot in after this.
       5. return the stored PulseRecord the app renders.
+
+    The recipient is the activity's OWN child_id (read from the stored activity_record,
+    never the client), threaded into both the LCI recompute and the alert evaluation so
+    every per-recipient write touches exactly that recipient (the isolation rule).
 
     now is injectable for tests (the snapshot's taken_at); it defaults to UTC now and
     is the only clock the flow uses.
@@ -82,10 +87,12 @@ def record_pulse(
 
     chapter = activity.get("chapter")
     tier_recommended = activity.get("tier")
+    child_id = activity.get("child_id")
 
     stored = _insert_pulse(
         user,
         activity_id=activity_id,
+        child_id=child_id,
         chapter=chapter,
         tier_recommended=tier_recommended,
         outcome_code=outcome_code,
@@ -93,15 +100,17 @@ def record_pulse(
         now=base_now,
     )
 
-    # Section 4.7 step 2: recompute the chapter LCI and snapshot it (within 10s).
-    lci_service.recompute_chapter_lci(user, chapter, now=base_now)
+    # Section 4.7 step 2: recompute THIS recipient's chapter LCI and snapshot it (within
+    # 10s). child_id is the activity's own recipient, so the fold reads only that
+    # recipient's pulses and the snapshot is written against that recipient.
+    lci_service.recompute_chapter_lci(user, chapter, child_id, now=base_now)
 
-    # Section 4.9 (Task 7): evaluate Erosion Alerts for the chapter AFTER the LCI is
-    # current (the alert reads the new score + snapshot history). Non-interrupting: the
-    # _safe wrapper logs and swallows any failure so the recorded pulse is never lost
+    # Section 4.9 (Task 7): evaluate Erosion Alerts for THIS recipient's chapter AFTER the
+    # LCI is current (the alert reads the new score + snapshot history). Non-interrupting:
+    # the _safe wrapper logs and swallows any failure so the recorded pulse is never lost
     # to an alerting problem (the alert is a background signal, KB 1.6). The Task 9
     # strategy outcome counts slot in after this.
-    alerts_service.evaluate_chapter_alert_safe(user, chapter, now=base_now)
+    alerts_service.evaluate_chapter_alert_safe(user, chapter, child_id, now=base_now)
 
     return _to_pulse_record(stored, chapter=chapter, tier_recommended=tier_recommended)
 
@@ -155,15 +164,17 @@ def list_pending_pulses(user: AuthedUser, *, now: Optional[datetime] = None) -> 
 
 
 def _get_owned_activity(user: AuthedUser, activity_id: str) -> Optional[Dict[str, Any]]:
-    """The caller's activity_record by id (chapter + tier), or None if not theirs.
+    """The caller's activity_record by id (chapter + tier + child_id), or None if not theirs.
 
     RLS scopes the read to the caller, so a forged id for another user matches
-    nothing. Selects the stored chapter and tier the Pulse copies (never re-derived).
+    nothing. Selects the stored chapter and tier the Pulse copies (never re-derived) and
+    the child_id, so the pulse, the LCI recompute, and the alert evaluation are all scoped
+    to the activity's OWN recipient.
     """
     client = get_anon_client(user.access_token)
     return _first(
         client.table(ACTIVITY_RECORD_TABLE)
-        .select("id, chapter, tier")
+        .select("id, chapter, tier, child_id")
         .eq("id", activity_id)
         .eq("user_id", user.id)
         .execute()
@@ -186,6 +197,7 @@ def _insert_pulse(
     user: AuthedUser,
     *,
     activity_id: str,
+    child_id: str,
     chapter: str,
     tier_recommended: str,
     outcome_code: str,
@@ -194,14 +206,17 @@ def _insert_pulse(
 ) -> Dict[str, Any]:
     """Insert the pulse_record and return the stored row (write confirmed).
 
-    user_id is the session; chapter and tier_recommended are the STORED activity
-    values (copied, not re-derived). If the insert returns no representation, the row
-    is read back under RLS so the record is confirmed before the recompute runs.
+    user_id is the session; child_id, chapter, and tier_recommended are the STORED
+    activity values (copied, not re-derived), so the pulse carries its recipient and the
+    per-recipient LCI fold reads it directly (migration 0011). If the insert returns no
+    representation, the row is read back under RLS so the record is confirmed before the
+    recompute runs.
     """
     client = get_anon_client(user.access_token)
     insert_row = {
         "user_id": user.id,
         "activity_id": activity_id,
+        "child_id": child_id,
         "chapter": chapter,
         "tier_recommended": tier_recommended,
         "outcome_code": outcome_code,
