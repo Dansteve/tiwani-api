@@ -210,7 +210,7 @@ def test_complete_onboarding_creates_child_when_none_and_marks_complete(monkeypa
         "age_band": "6-8",
         "support_level_code": "SL-MED",
         "tags": ["SN-NOISE", "CM-MIXED"],
-        "first_activity": {"chapter": "mornings", "activity": "school-run"},
+        "first_activity": {"chapter": "mornings", "activity_type": "school-run"},
     }
     result = svc.complete_onboarding(USER, payload)
 

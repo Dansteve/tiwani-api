@@ -242,7 +242,7 @@ def test_onboarding_success_returns_profile_and_child(authed, monkeypatch):
             "age_band": "6-8",
             "support_level_code": "SL-MED",
             "tags": ["SN-NOISE", "TR-CHANGE", "CM-MIXED", "RC-VAR"],
-            "first_activity": {"chapter": "mornings", "activity": "school-run"},
+            "first_activity": {"chapter": "mornings", "activity_type": "school-run"},
         },
     )
     assert response.status_code == 200

@@ -38,11 +38,12 @@ def test_payload_accepts_full_coded_submission():
         age_band="6-8",
         support_level_code="SL-HIGH",
         tags=["SN-NOISE", "TR-CHANGE", "CM-MIXED", "RC-VAR"],
-        first_activity={"chapter": "mornings", "activity": "school-run"},
+        first_activity={"chapter": "mornings", "activity_type": "school-run"},
     )
     assert Tag.SN_NOISE in payload.tags
     assert isinstance(payload.first_activity, OnboardingActivitySelection)
     assert payload.first_activity.chapter == "mornings"
+    assert payload.first_activity.activity_type == "school-run"
 
 
 def test_payload_rejects_unknown_tag():
@@ -64,6 +65,6 @@ def test_payload_rejects_two_recovery_tags():
         )
 
 
-def test_first_activity_requires_chapter_and_activity():
+def test_first_activity_requires_chapter_and_activity_type():
     with pytest.raises(ValidationError):
         OnboardingActivitySelection(chapter="mornings")

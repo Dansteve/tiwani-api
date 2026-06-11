@@ -34,15 +34,17 @@ class OnboardingActivitySelection(BaseModel):
     """Screen 3: the first chapter + activity the Coordinator chooses to prepare.
 
     Captured as structured identifiers for routing into the first plan. Not
-    scored here (the LCE is Task 5). chapter and activity are opaque structured
-    strings at this stage because the chapter set and the activity scenario
-    matrix are seed-blocked (Q7); they are stored on the payload, not validated
-    against a seeded vocabulary that does not exist yet, and are not written to
-    an activity_record by this endpoint.
+    scored here (the LCE is Task 5). chapter and activity_type are opaque
+    structured strings at this stage because the chapter set and the activity
+    scenario matrix are seed-blocked (Q7); they are stored on the payload, not
+    validated against a seeded vocabulary that does not exist yet, and are not
+    written to an activity_record by this endpoint. The field is activity_type
+    (not activity) to match the activity_record schema (Product.md section 5)
+    and the app onboarding payload, which both use activity_type.
     """
 
     chapter: str = Field(..., min_length=1)
-    activity: str = Field(..., min_length=1)
+    activity_type: str = Field(..., min_length=1)
 
 
 class OnboardingPayload(BaseModel):
