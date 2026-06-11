@@ -317,7 +317,9 @@ def test_complete_onboarding_returning_user_does_not_trigger_recipient_guard(mon
     )
     _patch_clients(monkeypatch, anon)
 
-    result = svc.complete_onboarding(USER, {"name": "Sam", "support_level_code": "SL-LOW", "tags": []})
+    result = svc.complete_onboarding(
+        USER, {"name": "Sam", "support_level_code": "SL-LOW", "tags": []}
+    )
 
     assert result["child"] == updated_child
     # No child_profile insert happened (no second recipient created).
