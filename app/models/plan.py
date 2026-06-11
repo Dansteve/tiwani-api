@@ -10,7 +10,13 @@ the app's mirror.
     a (chapter, activity_code) pair; today_flags is the section 4.4 "today" flags
     as TG- codes. The app sends the flags; it NEVER applies the +1/+2 itself.
   - PreparationPlan: what the engine returns (the section 4.4 output + the stored
-    activity id + the scheduled Pulse time the app shows).
+    activity id + the scheduled Pulse time the app shows). The SAME shape is returned
+    by GET /api/v3/plans/{activity_id} reading the STORED activity_record back (no
+    re-run of the engine); dimension_explanations is optional because it is not stored
+    (it is null on a stored-plan read, populated on the POST that just ran the engine).
+  - PlanSummary: one row of GET /api/v3/plans (the caller's stored plans, newest
+    first): the lightweight identity + score + the pulse status, so the app can list
+    "your prepared plans" without fetching each full plan.
   - ActivityOption: one row of the activity picker (GET /api/v3/chapters/{chapter}
     /activities): a scenario's code, name, and base tier for the app's list.
 
@@ -101,6 +107,12 @@ class PreparationPlan(BaseModel):
     date + 2 hours, or 09:00 the next day if no date), shown by the app.
     used_chapter_average is True for a custom activity, so the app can say the
     scores are an estimate.
+
+    dimension_explanations is OPTIONAL because the activity_record does not store it
+    (it is a section 4.4 step 10 derivation, not a stored value): POST /api/v3/plans
+    populates it from the just-run engine, but GET /api/v3/plans/{activity_id} reads
+    the stored row back and returns it as null (it never re-runs the engine to derive
+    it). The app's POST view always receives it; a stored-plan view must allow null.
     """
 
     model_config = ConfigDict(use_enum_values=True)
@@ -113,9 +125,35 @@ class PreparationPlan(BaseModel):
     total: int = Field(..., ge=4, le=20)
     tier: Tier
     strategies: List[PlanStrategy]
-    dimension_explanations: DimensionExplanations
+    dimension_explanations: Optional[DimensionExplanations] = None
     scheduled_pulse_at: datetime
     used_chapter_average: bool = False
+
+
+class PlanSummary(BaseModel):
+    """One stored plan in the caller's list (GET /api/v3/plans), newest first.
+
+    A lightweight projection of an activity_record so the app can show "your prepared
+    plans" without fetching each full plan: the identity (activity_id, chapter,
+    activity_name), the headline score (tier + total, the STORED values), and when it
+    was prepared (created_at). The pulse status is derived the same way the pending
+    list is (section 4.7): pulse_exists is true once any pulse_record (completed or
+    skipped) exists for the activity; pulse_due is true when the scheduled Pulse time
+    has passed AND no pulse exists yet (the activity is currently awaiting a check-in).
+    A plan with no pulse and a future scheduled time has both false. The full plan is
+    at GET /api/v3/plans/{activity_id}.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    activity_id: str
+    chapter: str
+    activity_name: str
+    tier: Tier
+    total: int = Field(..., ge=4, le=20)
+    created_at: datetime
+    pulse_exists: bool = False
+    pulse_due: bool = False
 
 
 class ActivityOption(BaseModel):

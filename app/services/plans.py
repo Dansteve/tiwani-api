@@ -17,13 +17,22 @@ and the user's own care recipient, never from the client.
 The engine is deterministic and reads the seeded scenario/tag rows; no scoring
 happens here (the route is thin, the engine is pure). This service only fetches
 the inputs, calls run_engine, writes the result, and shapes the PreparationPlan.
+
+READING STORED PLANS BACK (no re-run): list_stored_plans and get_stored_plan serve
+the two READ endpoints (GET /api/v3/plans and GET /api/v3/plans/{activity_id}). They
+read the caller's activity_record rows under RLS and return the STORED values, never
+calling run_engine again. get_stored_plan reconstructs the PreparationPlan shape from
+the stored columns (the final scores, total, tier, the JSON strategies, the scheduled
+pulse time); dimension_explanations is not stored, so it is null on a stored read (the
+model allows it). The pulse status on a summary is derived the same way the pending
+list is (section 4.7), reading the caller's pulse_record activity ids.
 """
 
 from __future__ import annotations
 
 from datetime import date as date_type
-from datetime import datetime, time, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime, time, timedelta, timezone
+from typing import Any, Dict, List, Optional, Set
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
@@ -33,13 +42,15 @@ from app.models.plan import (
     DimensionExplanations,
     DimensionScores,
     PlanStrategy,
+    PlanSummary,
     PreparationPlan,
 )
 from app.models.seed import Dimension, Tier
 from app.seed import load_seed
-from app.services.profile import _first, get_child
+from app.services.profile import _first, _rows, get_child
 
 ACTIVITY_RECORD_TABLE = "activity_record"
+PULSE_RECORD_TABLE = "pulse_record"
 
 # Section 4.4 step 9 Pulse-scheduling constants. The Pulse is due the activity date
 # + this many hours; with no date it is due at the default time the next day. These
@@ -52,6 +63,15 @@ PULSE_DEFAULT_TIME = time(hour=9, minute=0)
 
 class NoCareRecipientError(Exception):
     """Raised when the user has no care recipient to plan for (route maps to 409)."""
+
+
+class PlanNotFoundError(Exception):
+    """Raised when an activity_id is unknown or not the caller's (route maps to 404).
+
+    RLS scopes the read to the caller, so a forged id for another user matches nothing
+    and surfaces here as not-found: the route returns 404 without confirming the row
+    exists for anyone (the error-contract rule, do not leak another user's data).
+    """
 
 
 def prepare_plan(
@@ -150,6 +170,209 @@ def list_chapter_activities(chapter: str) -> List[ActivityOption]:
         if row.chapter == chapter
     ]
     return options
+
+
+# ---------------------------------------------------------------------------
+# reads (GET /api/v3/plans + GET /api/v3/plans/{activity_id})
+# ---------------------------------------------------------------------------
+
+
+def list_stored_plans(
+    user: AuthedUser, *, chapter: Optional[str] = None, now: Optional[datetime] = None
+) -> List[PlanSummary]:
+    """The caller's stored plans as lightweight summaries, newest first.
+
+    Reads the caller's activity_record rows (RLS-scoped, so only their own), optionally
+    filtered to one chapter, ordered by created_at descending (newest first). Each row
+    becomes a PlanSummary carrying the STORED identity + score (no re-run of the
+    engine) plus the pulse status: an activity is pulse_exists once any pulse_record
+    exists for it, and pulse_due when its scheduled_pulse_at has passed with no pulse
+    yet (the section 4.7 pending definition). The pulsed-activity ids are read once for
+    the whole list. now is injectable for tests (the due comparison); it defaults to
+    UTC now.
+    """
+    base_now = _utc_now(now)
+    client = get_anon_client(user.access_token)
+
+    query = (
+        client.table(ACTIVITY_RECORD_TABLE)
+        .select("id, chapter, activity_name, tier, total, scheduled_pulse_at, created_at")
+        .eq("user_id", user.id)
+    )
+    if chapter is not None:
+        query = query.eq("chapter", chapter)
+    rows = _rows(query.order("created_at", desc=True).execute())
+
+    pulsed_ids = _pulsed_activity_ids(user)
+
+    summaries: List[PlanSummary] = []
+    for row in rows:
+        activity_id = row.get("id")
+        if activity_id is None:
+            continue
+        pulse_exists = str(activity_id) in pulsed_ids
+        summaries.append(
+            PlanSummary(
+                activity_id=str(activity_id),
+                chapter=row.get("chapter"),
+                activity_name=row.get("activity_name") or "",
+                tier=Tier(row.get("tier")),
+                total=row.get("total"),
+                created_at=_parse_dt(row.get("created_at")) or base_now,
+                pulse_exists=pulse_exists,
+                pulse_due=_is_pulse_due(row, pulse_exists, base_now),
+            )
+        )
+
+    # PostgREST already ordered newest-first; re-sort defensively (a fake client or a
+    # null created_at must not reorder the list) so the contract holds regardless.
+    summaries.sort(key=lambda s: s.created_at, reverse=True)
+    return summaries
+
+
+def get_stored_plan(user: AuthedUser, activity_id: str) -> PreparationPlan:
+    """The caller's full stored plan for one activity, in the PreparationPlan shape.
+
+    Reads the one activity_record by id under RLS (a forged id for another user matches
+    nothing => PlanNotFoundError, the route's 404, without confirming existence). Shapes
+    the STORED columns back into PreparationPlan: the final scores, total, tier, the
+    stored JSON strategies, and the scheduled pulse time. It NEVER re-runs the engine,
+    so dimension_explanations (a step 10 derivation, not stored) is null and
+    used_chapter_average stays at its default (it is a POST-time estimate flag, not a
+    stored value).
+    """
+    row = _get_owned_activity_full(user, activity_id)
+    if row is None:
+        raise PlanNotFoundError("No such plan for this user")
+    return _stored_row_to_plan(row)
+
+
+def _is_pulse_due(row: Dict[str, Any], pulse_exists: bool, now: datetime) -> bool:
+    """True when the activity's scheduled Pulse has passed with no pulse yet (4.7).
+
+    The section 4.7 "pending" condition: scheduled_pulse_at is at or before now AND no
+    pulse_record exists for the activity. A plan whose pulse time is still in the future,
+    or that has already been pulsed, is not due.
+    """
+    if pulse_exists:
+        return False
+    scheduled_at = _parse_dt(row.get("scheduled_pulse_at"))
+    if scheduled_at is None:
+        return False
+    return scheduled_at <= now
+
+
+def _pulsed_activity_ids(user: AuthedUser) -> Set[str]:
+    """The set of the caller's activity ids that already have a pulse (completed/skipped).
+
+    The same source the pending list uses (a pulse_record exists for the activity), read
+    once so a list of N plans does not issue N pulse lookups. RLS scopes it to the
+    caller's pulses.
+    """
+    client = get_anon_client(user.access_token)
+    rows = _rows(
+        client.table(PULSE_RECORD_TABLE).select("activity_id").eq("user_id", user.id).execute()
+    )
+    return {str(r.get("activity_id")) for r in rows if r.get("activity_id") is not None}
+
+
+def _get_owned_activity_full(user: AuthedUser, activity_id: str) -> Optional[Dict[str, Any]]:
+    """The caller's full activity_record by id, or None if it is not theirs.
+
+    Selects every stored plan column the PreparationPlan reconstruction needs. RLS scopes
+    the read to the caller, so a forged id for another user returns nothing (404 at the
+    route), never another user's row.
+    """
+    client = get_anon_client(user.access_token)
+    return _first(
+        client.table(ACTIVITY_RECORD_TABLE)
+        .select(
+            "id, chapter, activity_code, activity_name, "
+            "temporal, sensory, logistical, human, total, tier, "
+            "strategies, scheduled_pulse_at"
+        )
+        .eq("id", activity_id)
+        .eq("user_id", user.id)
+        .execute()
+    )
+
+
+def _stored_row_to_plan(row: Dict[str, Any]) -> PreparationPlan:
+    """Shape a stored activity_record row into the PreparationPlan the app renders.
+
+    Reads the STORED values only (no engine run): the final four scores, the total and
+    tier, and the stored JSON strategies (each {title, detail, also_worked_in_chapter}).
+    dimension_explanations is null (not stored) and used_chapter_average stays at its
+    default (a POST-time flag, not persisted).
+    """
+    return PreparationPlan(
+        activity_id=str(row.get("id")),
+        chapter=row.get("chapter"),
+        activity_code=row.get("activity_code"),
+        activity_name=row.get("activity_name") or "",
+        scores=DimensionScores(
+            temporal=row.get("temporal"),
+            sensory=row.get("sensory"),
+            logistical=row.get("logistical"),
+            human=row.get("human"),
+        ),
+        total=row.get("total"),
+        tier=Tier(row.get("tier")),
+        strategies=_strategies_from_stored(row.get("strategies")),
+        dimension_explanations=None,
+        scheduled_pulse_at=_parse_dt(row.get("scheduled_pulse_at")),
+    )
+
+
+def _strategies_from_stored(stored: Any) -> List[PlanStrategy]:
+    """The stored strategies JSON back into the ranked PlanStrategy list (order kept).
+
+    The activity_record stores strategies as an ordered array of
+    {title, detail, also_worked_in_chapter}; map each back to a PlanStrategy, keeping the
+    stored order (the rank the plan was returned in). A null/empty value yields an empty
+    list.
+    """
+    if not isinstance(stored, list):
+        return []
+    strategies: List[PlanStrategy] = []
+    for item in stored:
+        if not isinstance(item, dict):
+            continue
+        strategies.append(
+            PlanStrategy(
+                title=item.get("title") or "",
+                detail=item.get("detail") or "",
+                also_worked_in_chapter=item.get("also_worked_in_chapter"),
+            )
+        )
+    return strategies
+
+
+def _utc_now(now: Optional[datetime]) -> datetime:
+    if now is not None:
+        return now
+    return datetime.now(timezone.utc)
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    """Parse a timestamptz value (ISO string or datetime) to an aware datetime.
+
+    Mirrors the parser in app/services/pulse.py: a datetime passes through (assumed UTC
+    if naive), an ISO string (with a trailing Z normalised) is parsed, anything else is
+    None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        text = value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    return None
 
 
 # ---------------------------------------------------------------------------

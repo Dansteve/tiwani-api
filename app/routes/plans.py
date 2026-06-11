@@ -9,22 +9,39 @@ Registered under /api/v3 in main.py, alongside the other v3 routes. The engine i
 server-side and deterministic; the app renders the returned plan and never
 recomputes a score (Product.md section 4.4, the LCE-is-server-side rule).
 
+The two GET reads return STORED values and never re-run the engine (the LCE is run
+only on the POST): GET /api/v3/plans lists the caller's stored plans as summaries, and
+GET /api/v3/plans/{activity_id} returns one stored plan in the PreparationPlan shape.
+Both are RLS-scoped to the caller; a non-owned activity_id is a 404 (it is invisible
+under RLS, and the api does not confirm it exists for anyone).
+
 Endpoints:
   POST /api/v3/plans                        run the LCE for the caller's care
                                             recipient + the chosen activity; store
                                             the activity_record; return the plan.
+  GET  /api/v3/plans                         list the caller's STORED plans (their
+                                            activity_records) newest first as
+                                            summaries; optional ?chapter= filter.
+  GET  /api/v3/plans/{activity_id}           the caller's full STORED plan for one
+                                            activity, in the PreparationPlan shape;
+                                            404 if not the caller's.
   GET  /api/v3/chapters/{chapter}/activities the seeded activity options for a
                                             chapter (the app's activity picker).
 """
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
 from app.models.chapters_v3 import Chapter
 from app.models.child_profile import Tag
-from app.models.plan import ActivityOption, PreparationPlan, PreparePlanRequest
+from app.models.plan import (
+    ActivityOption,
+    PlanSummary,
+    PreparationPlan,
+    PreparePlanRequest,
+)
 from app.services import plans as plans_service
 
 router = APIRouter()
@@ -65,6 +82,47 @@ def create_plan(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="No care recipient found; complete onboarding first",
+        ) from exc
+
+
+@router.get("/plans", response_model=List[PlanSummary])
+def list_plans(
+    chapter: Optional[str] = Query(default=None),
+    user: AuthedUser = Depends(get_current_user),
+) -> List[PlanSummary]:
+    """The caller's STORED plans (their activity_records), newest first, as summaries.
+
+    Returns one PlanSummary per stored plan: the identity, the stored tier + total, when
+    it was prepared, and the pulse status (whether a pulse exists, and whether one is
+    currently due). STORED values only, the engine is not re-run. The optional ?chapter=
+    filter narrows to one Life Chapter (an unknown chapter code is a 422). The reads are
+    user-scoped (the current-user dependency + RLS), so only the caller's own plans are
+    listed.
+    """
+    if chapter is not None:
+        _validate_chapter(chapter)
+    return plans_service.list_stored_plans(user, chapter=chapter)
+
+
+@router.get("/plans/{activity_id}", response_model=PreparationPlan)
+def get_plan(
+    activity_id: str,
+    user: AuthedUser = Depends(get_current_user),
+) -> PreparationPlan:
+    """The caller's full STORED plan for one activity, in the PreparationPlan shape.
+
+    Reads the stored activity_record back and shapes it into the same PreparationPlan the
+    POST returns (scores, total, tier, strategies, scheduled_pulse_at); it never re-runs
+    the engine, so dimension_explanations is null on this stored read. 404 if the
+    activity is unknown or not the caller's (RLS makes another user's row invisible and
+    the api does not confirm it exists).
+    """
+    try:
+        return plans_service.get_stored_plan(user, activity_id)
+    except plans_service.PlanNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plan not found",
         ) from exc
 
 
