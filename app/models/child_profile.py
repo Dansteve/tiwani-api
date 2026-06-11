@@ -36,11 +36,16 @@ class SupportLevelCode(str, Enum):
 class Tag(str, Enum):
     """The care-recipient tag vocabulary (Tag Architecture v1.0, SeedData.md).
 
-    Four families: Sensory (SN-, multi-select), Transitions (TR-, multi-select),
-    Communication (CM-, single-select), Recovery (RC-, single-select). The cap
-    logic (max 10 across Sensory + Transitions; Communication and Recovery sit
-    outside it) is UI-only; the table stores every selected tag. The per-tag
-    modifier values are seed data and are still missing (Q7).
+    Five families. FOUR are PERMANENT profile tags chosen at onboarding and editable
+    later: Sensory (SN-, multi-select), Transitions (TR-, multi-select),
+    Communication (CM-, single-select), Recovery (RC-, single-select). The fifth,
+    Triggers (TG-), are the section 4.4 "today" flags expressed as tags: parent-added,
+    day-level "today flags" that temporarily elevate scores for ONE day and never
+    change the saved profile (Product.md section 4.4; Tag Architecture v1.0 Part 2
+    "Known triggers"). The Sensory + Transitions max-10 cap is UI-only (the table
+    stores every selected tag). The per-tag modifier VALUES are seed data
+    (app/seed/tag_architecture_v1.py), an exact transcription of Tag Architecture
+    v1.0; this enum only pins the valid code set.
     """
 
     # Sensory (SN-, multi-select)
@@ -76,6 +81,14 @@ class Tag(str, Enum):
     RC_MOD = "RC-MOD"
     RC_EXT = "RC-EXT"
     RC_VAR = "RC-VAR"
+
+    # Triggers (TG-, parent-added day-level "today" flags; section 4.4)
+    TG_HUNGER = "TG-HUNGER"
+    TG_FATIGUE = "TG-FATIGUE"
+    TG_ILL = "TG-ILL"
+    TG_ANXIETY = "TG-ANXIETY"
+    TG_MEDS = "TG-MEDS"
+    TG_HOME = "TG-HOME"
 
 
 def validate_single_select_tags(tags: List[Tag]) -> List[Tag]:

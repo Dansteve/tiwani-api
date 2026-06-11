@@ -1,24 +1,36 @@
 """The seed loader + on-load validation (hard-fail) + the engine read path.
 
-This is what turns the authored Knowledge Base v1 (the scenario matrix) and Tag
-Architecture v1 (the tag modifiers) into the validated, in-memory lookups the LCE
-reads (Product.md section 4.4, HardRules/Api/Modules/Engine.md). It is the SINGLE
-place the seed is assembled and checked; the engine calls load_seed() and reads the
-returned tables, never a hardcoded score (SeedData.md hard rule).
+This is what turns the Knowledge Base v1 (the scenario matrix) and Tag Architecture
+v1 (the tag modifiers), an EXACT VERBATIM TRANSCRIPTION of the authoritative TIWANI
+LCE Complete Knowledge Base v1.0 + Child Profile Tag Architecture v1.0 (April 2026),
+into the validated, in-memory lookups the LCE reads (Product.md section 4.4,
+HardRules/Api/Modules/Engine.md). It is the SINGLE place the seed is assembled and
+checked; the engine calls load_seed() and reads the returned tables, never a
+hardcoded score (SeedData.md hard rule).
 
 VALIDATION IS HARD-FAIL, NOT SILENT (Task 2 requirement). load_seed() raises
 SeedValidationError on the FIRST malformed input, with a clear message, so a bad
-authored row can never reach the engine:
+row can never reach the engine:
   - every base score is a whole number in 1..5 (pydantic enforces this per field;
     the loader re-checks defensively and reports the offending scenario);
+  - THE TRANSCRIPTION GUARD: every scenario's four cells SUM to the Total printed in
+    the source matrix (stated_total); a mistyped cell stops the sum matching and the
+    load fails with the offending scenario name;
+  - every scenario's tier matches its total band (4..8 Full, 9..13 Modified, 14..20
+    Pivot; the Career matrix tier is derived from the band, the rest are the printed
+    Tier, so this also catches a mistranscribed Tier cell);
   - every chapter in the six fixed set (Chapter enum) is present with at least the
     minimum number of scenarios;
   - every scenario's chapter code is one of the six (no orphan chapter);
   - every (chapter, activity_code) is unique (no duplicate scenario);
   - every base total lands in 4..20 (true by construction, asserted anyway);
   - every scenario has at least one strategy and the ranks are 1..N contiguous;
-  - every tag modifier references a defined tag code (the recovered taxonomy);
+  - every tag modifier references a defined tag code (the Tag enum, 32 codes);
   - every single tag modifier is +1 or +2;
+  - the tags the source gives NO score carry no modifier row: RC-SHORT and the
+    strategy-only Communication tags (CM-VERBAL/LIMVERBAL/MAKATON/MIXED). NOTE: the
+    other Recovery tags DO carry a Temporal modifier now (RC-MOD +1, RC-EXT +2,
+    RC-VAR +1), correcting the derived v1 where every RC- tag was 0-pressure;
   - no single tag pushes its OWN contribution to a dimension over the +2 cap (the
     cap on the SUM across stacked tags is enforced at engine apply time, below).
 
@@ -58,6 +70,7 @@ from app.models.seed import (
     ScenarioRow,
     ScenarioStrategy,
     TagModifierRow,
+    tier_for_total,
 )
 from app.seed.knowledge_base_v1 import (
     ALL_SCENARIOS,
@@ -65,10 +78,11 @@ from app.seed.knowledge_base_v1 import (
     KNOWLEDGE_BASE_VERSION,
 )
 from app.seed.tag_architecture_v1 import (
+    NO_SCORE_COMMUNICATION_TAGS,
     TAG_ARCHITECTURE_PROVENANCE,
     TAG_ARCHITECTURE_VERSION,
     TAG_MODIFIER_ROWS,
-    ZERO_PRESSURE_FAMILIES,
+    ZERO_PRESSURE_RECOVERY_TAGS,
 )
 
 # The minimum scenarios every chapter must carry for a usable v1 (Task 2 asks for
@@ -81,7 +95,7 @@ class SeedValidationError(Exception):
 
 
 def _valid_tag_codes() -> set:
-    """The defined tag vocabulary (the recovered taxonomy in app/models)."""
+    """The defined tag vocabulary (the 32-code Tag enum in app/models)."""
     from app.models.child_profile import Tag
 
     return {t.value for t in Tag}
@@ -240,6 +254,25 @@ def _validate_scenarios(scenarios: List[ScenarioRow]) -> None:
                 f"is outside {MIN_TOTAL}..{MAX_TOTAL}"
             )
 
+        # THE TRANSCRIPTION GUARD (Task 2 requirement): the sum of the four base cells
+        # must equal the Total PRINTED in the source matrix (stated_total). The row
+        # model already enforces this; re-checked here so a malformed set hard-fails
+        # the load with the offending scenario named.
+        if row.base_scores.total != row.stated_total:
+            raise SeedValidationError(
+                f"scenario '{row.activity_code}' four cells sum to "
+                f"{row.base_scores.total} but the source's stated total is "
+                f"{row.stated_total} (transcription error)"
+            )
+
+        # The transcribed tier must match the total's band (section 4.4 step 6).
+        expected_tier = tier_for_total(row.stated_total)
+        if row.tier != expected_tier:
+            raise SeedValidationError(
+                f"scenario '{row.activity_code}' tier {row.tier.value} does not match "
+                f"total {row.stated_total} (band expects {expected_tier.value})"
+            )
+
         # At least one strategy, ranks contiguous (pydantic checks ranks; this
         # catches the empty case with a scenario-named message).
         if not row.strategies:
@@ -265,17 +298,26 @@ def _validate_tag_modifiers(tag_modifiers: List[TagModifierRow]) -> None:
     per_tag_dim: Dict[Tuple[str, Dimension], int] = defaultdict(int)
 
     for mod in tag_modifiers:
-        # Referenced tag code must be defined in the recovered taxonomy.
+        # Referenced tag code must be defined in the taxonomy (the Tag enum).
         if mod.tag_code not in valid_codes:
             raise SeedValidationError(
                 f"tag modifier references unknown tag code '{mod.tag_code}'"
             )
 
-        # A 0-pressure family (Recovery) must not carry a modifier row at all.
-        if any(mod.tag_code.startswith(prefix) for prefix in ZERO_PRESSURE_FAMILIES):
+        # The tags the source gives NO score must not carry a modifier row: RC-SHORT
+        # ("No modifier. Standard transition windows apply.") and the strategy-only
+        # Communication tags (CM-VERBAL/LIMVERBAL/MAKATON/MIXED). NOTE: this CORRECTS
+        # the derived v1, where every RC- tag was 0-pressure; here RC-MOD/RC-EXT/RC-VAR
+        # legitimately carry a Temporal modifier and are NOT in this set.
+        if mod.tag_code in ZERO_PRESSURE_RECOVERY_TAGS:
             raise SeedValidationError(
-                f"tag '{mod.tag_code}' is in a 0-pressure family "
-                f"({ZERO_PRESSURE_FAMILIES}) and must not have a modifier row"
+                f"tag '{mod.tag_code}' is a 0-pressure recovery tag "
+                f"({ZERO_PRESSURE_RECOVERY_TAGS}) and must not have a modifier row"
+            )
+        if mod.tag_code in NO_SCORE_COMMUNICATION_TAGS:
+            raise SeedValidationError(
+                f"tag '{mod.tag_code}' is a strategy-only communication tag "
+                f"({NO_SCORE_COMMUNICATION_TAGS}) and must not have a modifier row"
             )
 
         # Each single modifier is +1 or +2.
@@ -337,6 +379,8 @@ def write_seed_to_db(client) -> Dict[str, int]:
                 "sensory": row.base_scores.sensory,
                 "logistical": row.base_scores.logistical,
                 "human": row.base_scores.human,
+                "tier": row.tier.value,
+                "stated_total": row.stated_total,
                 "rationale": row.rationale,
             }
         ).execute()

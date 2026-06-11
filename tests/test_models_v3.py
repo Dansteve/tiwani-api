@@ -119,16 +119,19 @@ def test_child_profile_defaults_to_empty_tags():
     assert profile.support_level_code is None
 
 
-def test_tag_vocabulary_covers_the_four_families():
+def test_tag_vocabulary_covers_the_five_families():
     codes = {t.value for t in Tag}
-    # Spot-check one representative code per family is present (SeedData.md taxonomy).
-    assert {"SN-NOISE", "TR-CHANGE", "CM-MIXED", "RC-VAR"}.issubset(codes)
-    # Counts per SeedData.md: SN 9, TR 6, CM 7, RC 4 => 26 total.
+    # Spot-check one representative code per family is present (the authoritative Tag
+    # Architecture v1.0 taxonomy, SeedData.md). The Triggers (TG-) family is the
+    # section 4.4 "today" flags expressed as tags.
+    assert {"SN-NOISE", "TR-CHANGE", "CM-MIXED", "RC-VAR", "TG-ILL"}.issubset(codes)
+    # Counts per Tag Architecture v1.0: SN 9, TR 6, CM 7, RC 4, TG 6 => 32 total.
     assert sum(c.startswith("SN-") for c in codes) == 9
     assert sum(c.startswith("TR-") for c in codes) == 6
     assert sum(c.startswith("CM-") for c in codes) == 7
     assert sum(c.startswith("RC-") for c in codes) == 4
-    assert len(codes) == 26
+    assert sum(c.startswith("TG-") for c in codes) == 6
+    assert len(codes) == 32
 
 
 def test_child_profile_update_is_all_optional():

@@ -13,10 +13,11 @@ lookups, and it reads them as DATA, never as hardcoded scores
 
 These schemas are the contract both the seed loader (app/seed/) and the engine
 read against, so a malformed authored row is rejected on load with a clear
-error rather than silently producing a wrong score. The VALUES are authored as
-a TIWANI-derived v1 (every cell has a written rationale; the whole set is
-versioned and labelled pending owner ratification + clinical sign-off, Tasks
-7/12); these schemas only pin the SHAPE and the hard ranges.
+error rather than silently producing a wrong score. The VALUES are an EXACT
+TRANSCRIPTION of the authoritative TIWANI LCE Complete Knowledge Base v1.0 and
+Child Profile Tag Architecture v1.0 (April 2026): the real product scores,
+tiers, strategies, and tag modifiers, copied cell for cell. These schemas only
+pin the SHAPE and the hard ranges.
 
 The four pressure dimensions are the engine's (Product.md section 4.4): temporal
 (timing, waiting, duration), sensory (noise, light, crowds), logistical
@@ -28,7 +29,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import List
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # The hard bounds the rubric and Product.md section 4.4 fix. A base score is a
 # whole number 1 to 5; a single tag's modifier is +1 or +2; the engine caps the
@@ -42,6 +43,12 @@ CAP_TAG_CONTRIBUTION_PER_DIMENSION = 2
 MIN_TOTAL = 4  # four dimensions at the 1 floor
 MAX_TOTAL = 20  # four dimensions at the 5 ceiling
 
+# The tier band boundaries (Product.md section 4.4 step 6): 4 to 8 Full, 9 to 13
+# Modified, 14 to 20 Pivot. The upper edge of each lower band; the top band runs to
+# MAX_TOTAL. Used by tier_for_total() to derive and validate every scenario's tier.
+MAX_TOTAL_FULL = 8
+MAX_TOTAL_MODIFIED = 13
+
 
 class Dimension(str, Enum):
     """The four LCE pressure dimensions (Product.md section 4.4)."""
@@ -50,6 +57,36 @@ class Dimension(str, Enum):
     SENSORY = "sensory"
     LOGISTICAL = "logistical"
     HUMAN = "human"
+
+
+class Tier(str, Enum):
+    """The participation tier (Product.md section 4.4 step 6, the source's banding).
+
+    The total-score band fixes the tier: 4 to 8 Full Engagement, 9 to 13 Modified
+    Participation, 14 to 20 Continuity Pivot. The Knowledge Base prints a Tier on
+    every scenario (five of the six matrices carry an explicit Tier column; the
+    Career matrix omits it and the tier is derived from the band). Stored on the
+    scenario so the transcription is faithful and checkable; the engine recomputes
+    the tier in step 6 and the loader hard-fails if a stored tier disagrees with
+    its total band.
+    """
+
+    FULL = "Full"
+    MODIFIED = "Modified"
+    PIVOT = "Pivot"
+
+
+def tier_for_total(total: int) -> Tier:
+    """The participation tier for a total score (Product.md section 4.4 banding).
+
+    The single definition of the 4 to 8 / 9 to 13 / 14 to 20 banding used to both
+    derive the Career chapter's tier and validate every stored tier on load.
+    """
+    if total <= MAX_TOTAL_FULL:
+        return Tier.FULL
+    if total <= MAX_TOTAL_MODIFIED:
+        return Tier.MODIFIED
+    return Tier.PIVOT
 
 
 class BaseScores(BaseModel):
@@ -113,6 +150,14 @@ class ScenarioRow(BaseModel):
     activity_code: str = Field(..., min_length=1)
     activity_name: str = Field(..., min_length=1)
     base_scores: BaseScores
+    # The Total printed in the source matrix for this scenario, carried verbatim so
+    # the load can assert it equals the sum of the four transcribed cells. This is
+    # the transcription-error guard: if a cell was mistyped, the four cells stop
+    # summing to the source's stated Total and the load hard-fails. By construction
+    # base_scores.total is the sum; stated_total is the INDEPENDENT number from the
+    # doc, so they can disagree only on a transcription slip.
+    stated_total: int = Field(..., ge=MIN_TOTAL, le=MAX_TOTAL)
+    tier: Tier
     rationale: str = Field(..., min_length=1)
     strategies: List[ScenarioStrategy] = Field(..., min_length=1)
 
@@ -133,6 +178,33 @@ class ScenarioRow(BaseModel):
                 f"duplicates, got {ranks}"
             )
         return strategies
+
+    @model_validator(mode="after")
+    def _total_and_tier_are_consistent(self) -> "ScenarioRow":
+        """Sum of the four cells == the source's stated Total, and tier matches band.
+
+        Two checks the transcription must satisfy:
+          - the four base cells sum to the Total PRINTED in the source matrix
+            (stated_total); a mismatch means a cell was mistyped on transcription;
+          - the stored tier matches the total's band (section 4.4 step 6: 4 to 8
+            Full, 9 to 13 Modified, 14 to 20 Pivot). For the Career matrix the tier
+            is derived from the band; for the others it is the printed Tier, so this
+            also catches a mistranscribed Tier cell.
+        Both are re-checked in the loader against the whole set.
+        """
+        if self.base_scores.total != self.stated_total:
+            raise ValueError(
+                f"scenario '{self.activity_code}' four cells sum to "
+                f"{self.base_scores.total} but the source's stated total is "
+                f"{self.stated_total} (transcription error)"
+            )
+        expected = tier_for_total(self.stated_total)
+        if self.tier != expected:
+            raise ValueError(
+                f"scenario '{self.activity_code}' tier {self.tier.value} does not "
+                f"match total {self.stated_total} (band expects {expected.value})"
+            )
+        return self
 
 
 class TagModifierRow(BaseModel):

@@ -44,10 +44,20 @@ create table if not exists public.scenario_matrix (
     sensory             smallint not null check (sensory between 1 and 5),
     logistical          smallint not null check (logistical between 1 and 5),
     human               smallint not null check (human between 1 and 5),
+    -- The participation tier (the source's banding; the engine recomputes it in
+    -- step 6). Stored so the transcription is faithful and queryable.
+    tier                text not null check (tier in ('Full', 'Modified', 'Pivot')),
+    -- The Total printed in the source matrix, plus a CHECK that it equals the sum of
+    -- the four cells: the transcription guard mirrored at the database (a mistyped
+    -- cell is rejected here too, not only in the loader).
+    stated_total        smallint not null check (stated_total between 4 and 20),
     rationale           text not null,
     created_at          timestamptz not null default now(),
     -- One scenario per (chapter, activity_code) within a seed version.
-    unique (seed_version, chapter, activity_code)
+    unique (seed_version, chapter, activity_code),
+    -- The four cells must sum to the stated Total (the transcription guard).
+    constraint scenario_matrix_total_is_sum
+        check (temporal + sensory + logistical + human = stated_total)
 );
 
 create index if not exists idx_scenario_matrix_lookup
