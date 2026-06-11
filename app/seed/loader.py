@@ -32,7 +32,12 @@ row can never reach the engine:
     other Recovery tags DO carry a Temporal modifier now (RC-MOD +1, RC-EXT +2,
     RC-VAR +1), correcting the derived v1 where every RC- tag was 0-pressure;
   - no single tag pushes its OWN contribution to a dimension over the +2 cap (the
-    cap on the SUM across stacked tags is enforced at engine apply time, below).
+    cap on the SUM across stacked tags is enforced at engine apply time, below);
+  - THE NON-CLINICAL GUARD: no user-facing seeded string (a scenario's activity name,
+    scoring explanation, or strategy title/body; a tag modifier's description) uses a
+    prohibited clinical word, reusing the SHARED guard the alert and Continuity Card
+    builders use (app/engines/alerts/guard, Product.md section 4.9), so a future seed
+    edit cannot slip a clinical word past the load.
 
 THE ENGINE READ PATH. load_seed() returns a SeedTables with:
   - get_base_scores(chapter, activity_code) -> BaseScores | None (LCE step 1; the
@@ -56,6 +61,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from app.engines.alerts.guard import find_prohibited_words
 from app.models.chapters_v3 import Chapter
 from app.models.seed import (
     CAP_TAG_CONTRIBUTION_PER_DIMENSION,
@@ -190,6 +196,7 @@ def load_seed() -> SeedTables:
 
     _validate_scenarios(scenarios)
     _validate_tag_modifiers(tag_modifiers)
+    _validate_non_clinical(scenarios, tag_modifiers)
 
     by_key: Dict[Tuple[str, str], ScenarioRow] = {}
     by_chapter: Dict[str, List[ScenarioRow]] = defaultdict(list)
@@ -336,6 +343,56 @@ def _validate_tag_modifiers(tag_modifiers: List[TagModifierRow]) -> None:
             raise SeedValidationError(
                 f"tag '{tag_code}' contributes {total} to {dimension.value}, over the "
                 f"+{CAP_TAG_CONTRIBUTION_PER_DIMENSION} per-dimension cap"
+            )
+
+
+def _validate_non_clinical(
+    scenarios: List[ScenarioRow], tag_modifiers: List[TagModifierRow]
+) -> None:
+    """Hard-fail if any user-facing seeded string uses a prohibited clinical word.
+
+    TIWANI is non-clinical infrastructure (root CLAUDE.md, Product.md section 4.9):
+    governed copy may only signpost community and statutory support and must never use
+    the prohibited clinical vocabulary. This reuses the SHARED guard
+    (app/engines/alerts/guard.find_prohibited_words, the single word list the alert and
+    Continuity Card builders also use, no second list) over the seeded content the
+    Knowledge Base + Tag Architecture put in front of a user: each scenario's activity
+    name, scoring explanation, and ranked strategy title + body, and each tag modifier's
+    description. So a prohibited word introduced by a future seed edit fails at load
+    (engine startup, the plans path, and the DB-write path), not only under the test.
+    A violation is raised as SeedValidationError to keep the loader's single hard-fail
+    contract. tests/test_seed_guard.py is the standing proof over the whole surface.
+    """
+    for row in scenarios:
+        where = f"scenario '{row.chapter}/{row.activity_code}'"
+        for field_name, text in (
+            ("activity_name", row.activity_name),
+            ("rationale", row.rationale),
+        ):
+            found = find_prohibited_words(text)
+            if found:
+                raise SeedValidationError(
+                    f"{where} {field_name} uses prohibited clinical words {found!r}: "
+                    "seeded copy signposts community and statutory support only "
+                    "(Product.md section 4.9)."
+                )
+        for strat in row.strategies:
+            for field_name, text in (("title", strat.title), ("body", strat.body)):
+                found = find_prohibited_words(text)
+                if found:
+                    raise SeedValidationError(
+                        f"{where} strategy rank {strat.rank} {field_name} uses prohibited "
+                        f"clinical words {found!r}: seeded copy signposts community and "
+                        "statutory support only (Product.md section 4.9)."
+                    )
+
+    for mod in tag_modifiers:
+        found = find_prohibited_words(mod.rationale)
+        if found:
+            raise SeedValidationError(
+                f"tag '{mod.tag_code}/{mod.dimension.value}' rationale uses prohibited "
+                f"clinical words {found!r}: seeded copy signposts community and statutory "
+                "support only (Product.md section 4.9)."
             )
 
 
