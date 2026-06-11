@@ -62,6 +62,9 @@ class CardContent(BaseModel):
       intro             a short supportive intro line.
       strategies        the top strategies, each {title, detail}, for an outsider.
       if_difficult      a calm, non-clinical "if things get difficult" line.
+      safety_note       a standing health-and-safety boundary: anything to do with food,
+                        medicines, or health follows the family's plan (ask them first),
+                        and 999 in an emergency. Deferring, non-clinical, on every card.
 
     Every string here passes the shared non-clinical guard at build time.
     """
@@ -76,6 +79,7 @@ class CardContent(BaseModel):
     intro: str
     strategies: List[CardStrategy]
     if_difficult: str
+    safety_note: str
 
 
 class CreateCardRequest(BaseModel):

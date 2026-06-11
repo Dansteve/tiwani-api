@@ -90,6 +90,21 @@ def test_build_card_assembles_the_expected_shape():
     assert content.intro and content.if_difficult
 
 
+def test_build_card_includes_a_standing_safety_boundary_naming_the_first_name():
+    # M1 (medical re-screen): every card carries a health-and-safety boundary that defers
+    # anything medical to the family, names the care recipient by first name only, and is a
+    # standing line on every card (not tier-specific).
+    content = build_card_content(_activity(), "Ade Bello")
+    assert content.safety_note
+    assert "Ade" in content.safety_note
+    assert "Bello" not in content.safety_note
+    assert "family" in content.safety_note.lower()
+    # The same boundary regardless of tier (it is a fixed, always-shown line); both
+    # resolve to the first name "Ade", so the copy is identical across tiers.
+    full = build_card_content(_activity(tier="Full"), "Ade")
+    assert full.safety_note == content.safety_note
+
+
 def test_build_card_caps_strategies_and_preserves_rank_order():
     content = build_card_content(_activity(), "Ade")
     assert len(content.strategies) == MAX_CARD_STRATEGIES

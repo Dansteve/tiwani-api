@@ -9,7 +9,8 @@ support them well.
 What it assembles (the section 4.6 contents, in order, minus the PDF/QR chrome the
 app adds): the care recipient's FIRST name only, the activity name, the
 participation tier in plain words, a short supportive intro, the top ~5 strategies
-(title + brief detail), and a calm "if things get difficult" line.
+(title + brief detail), a calm "if things get difficult" line, and a standing
+health-and-safety boundary that defers anything medical to the family's own plan.
 
 THE SAFETY RULES (HardRules/Api/Modules/Cards.md, root CLAUDE.md):
   - FIRST name only. The full name never leaves this module (first_name_only).
@@ -68,12 +69,28 @@ _TIER_INTRO: Dict[Tier, str] = {
 
 # The "if things get difficult" line (section 4.6). Calm, reassuring, non-clinical,
 # and NON-coercive: it tells the helper to slow down and reach the family, never to
-# take any medical step. The same line for every card, so it is a fixed, guarded
-# string.
+# take any medical step. It names the care recipient so a helper never reads the
+# difficulty as the child's fault (the psychiatrist re-screen note P1): the fault sits
+# with neither party, it is just a hard moment. The same line for every card, so it is
+# a fixed, guarded string.
 _IF_DIFFICULT = (
-    "If things get difficult, that is okay and it is not your fault. Slow right down, "
-    "give {name} space and time, and keep your tone calm. If you are unsure or worried, "
-    "contact the family, they would always rather you reached out."
+    "If things get difficult, that is okay. It is not your fault, and it is not {name}'s "
+    "either, this is just a hard moment. Slow right down, give {name} space and time, and "
+    "keep your tone calm. If you are unsure or worried, contact the family, they would "
+    "always rather you reached out."
+)
+
+# A standing health-and-safety boundary shown on EVERY card (the medical re-screen
+# finding M1). A helper is not a health professional and the card is not a complete
+# instruction set, so for anything touching food, medicines, or the care recipient's
+# health the family's own plan governs and the helper asks them first. Non-clinical and
+# non-coercive: it defers, it never instructs a medical step, and it signposts only the
+# family and, for a genuine emergency, the universal emergency number. Fixed copy, run
+# through the shared guard like every other line.
+_SAFETY_NOTE = (
+    "For anything to do with food, allergies, medicines, or {name}'s health, follow the "
+    "family's instructions and ask them first. If you are ever worried about {name}'s "
+    "wellbeing, contact the family straight away, and call 999 in an emergency."
 )
 
 
@@ -135,6 +152,7 @@ def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent
     tier_label = _TIER_PLAIN_LABEL[tier]
     intro = _TIER_INTRO[tier].format(name=first_name)
     if_difficult = _IF_DIFFICULT.format(name=first_name)
+    safety_note = _SAFETY_NOTE.format(name=first_name)
     strategies = _card_strategies(activity.get("strategies"))
 
     # The shared non-clinical guard over EVERY helper-facing string: the same guard the
@@ -146,6 +164,7 @@ def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent
         tier_label,
         intro,
         if_difficult,
+        safety_note,
         *[s.title for s in strategies],
         *[s.detail for s in strategies],
     )
@@ -159,4 +178,5 @@ def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent
         intro=intro,
         strategies=strategies,
         if_difficult=if_difficult,
+        safety_note=safety_note,
     )

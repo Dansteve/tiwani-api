@@ -36,6 +36,7 @@ SAFE_CONTENT = CardContent(
     intro="Thank you for being here.",
     strategies=[CardStrategy(title="Build in extra time", detail="No rushing at the gate.")],
     if_difficult="If things get difficult, that is okay.",
+    safety_note="Follow the family's plan for food, medicines, or Ade's health.",
 )
 
 
@@ -97,6 +98,7 @@ def test_post_cards_returns_the_cardcreated_shape(authed, monkeypatch):
         "intro",
         "strategies",
         "if_difficult",
+        "safety_note",
     }
     assert content["child_first_name"] == "Ade"
 
