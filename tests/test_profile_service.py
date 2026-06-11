@@ -214,6 +214,63 @@ def test_create_child_allows_first_recipient(monkeypatch):
     assert any(c["op"] == "insert" for c in anon.calls)
 
 
+# --- the child_id resolver + the switcher list (multi care recipient) -------
+
+
+def test_resolve_child_id_returns_the_sole_child_when_none_given(monkeypatch):
+    # No explicit child_id: the resolver falls back to the caller's sole recipient
+    # (get_child), the back-compat default while the one-recipient guard holds.
+    row = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
+    anon = FakeClient({("child_profile", "select"): FakeResponse([row])})
+    _patch_clients(monkeypatch, anon)
+
+    assert svc.resolve_child_id(USER) == "c-1"
+    # The fallback read was scoped to the caller.
+    assert ("user_id", "u-1") in anon.calls[0]["filters"]
+
+
+def test_resolve_child_id_returns_none_when_no_recipient(monkeypatch):
+    # A fresh user with no recipient yet resolves to None (callers read the empty baseline).
+    anon = FakeClient({("child_profile", "select"): FakeResponse([])})
+    _patch_clients(monkeypatch, anon)
+    assert svc.resolve_child_id(USER) is None
+
+
+def test_resolve_child_id_verifies_an_explicit_id_is_owned(monkeypatch):
+    # An explicit child_id is verified owned (get_child_by_id, filtered by id AND user_id)
+    # and returned; the read is scoped so another user's id can never resolve.
+    row = {"id": "c-9", "user_id": "u-1", "name": "Sam"}
+    anon = FakeClient({("child_profile", "select"): FakeResponse([row])})
+    _patch_clients(monkeypatch, anon)
+
+    assert svc.resolve_child_id(USER, "c-9") == "c-9"
+    filters = anon.calls[0]["filters"]
+    assert ("id", "c-9") in filters
+    assert ("user_id", "u-1") in filters
+
+
+def test_resolve_child_id_raises_for_an_unowned_id(monkeypatch):
+    # RLS makes another user's child invisible: the ownership read returns nothing, so a
+    # forged/someone-else's child_id raises ChildNotFoundError (the route maps to 404).
+    anon = FakeClient({("child_profile", "select"): FakeResponse([])})
+    _patch_clients(monkeypatch, anon)
+    with pytest.raises(svc.ChildNotFoundError):
+        svc.resolve_child_id(USER, "c-forged")
+
+
+def test_list_children_returns_callers_rows_scoped_by_user(monkeypatch):
+    rows = [
+        {"id": "c-2", "user_id": "u-1", "name": "Ade"},
+        {"id": "c-1", "user_id": "u-1", "name": "Sam"},
+    ]
+    anon = FakeClient({("child_profile", "select"): FakeResponse(rows)})
+    _patch_clients(monkeypatch, anon)
+
+    result = svc.list_children(USER)
+    assert [r["id"] for r in result] == ["c-2", "c-1"]
+    assert ("user_id", "u-1") in anon.calls[0]["filters"]  # RLS-scoped to the caller
+
+
 def test_update_child_scopes_by_id_and_user(monkeypatch):
     updated = {"id": "c-1", "user_id": "u-1", "name": "Samuel"}
     anon = FakeClient({("child_profile", "update"): FakeResponse([updated])})

@@ -68,6 +68,7 @@ def authed(client):
         ("put", "/api/v3/profile"),
         ("post", "/api/v3/child"),
         ("get", "/api/v3/child"),
+        ("get", "/api/v3/children"),
         ("put", "/api/v3/child/c-1"),
         ("post", "/api/v3/onboarding"),
     ],
@@ -187,6 +188,32 @@ def test_get_child_not_found_is_404(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "get_child", lambda user: None)
     response = authed.get("/api/v3/child")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /children (the switcher list)
+# ---------------------------------------------------------------------------
+
+
+def test_list_children_returns_the_callers_recipients(authed, monkeypatch):
+    second = {**CHILD_ROW, "id": "c-2", "name": "Ade"}
+    monkeypatch.setattr(
+        routes.profile_service, "list_children", lambda user: [CHILD_ROW, second]
+    )
+    response = authed.get("/api/v3/children")
+    assert response.status_code == 200
+    body = response.json()
+    assert [c["id"] for c in body] == ["c-1", "c-2"]
+    assert [c["name"] for c in body] == ["Sam", "Ade"]
+
+
+def test_list_children_empty_is_200_not_404(authed, monkeypatch):
+    # Unlike GET /child, "no recipients" is a valid switcher state: a 200 empty list,
+    # not a 404. The future app shell reads this to decide whether to prompt onboarding.
+    monkeypatch.setattr(routes.profile_service, "list_children", lambda user: [])
+    response = authed.get("/api/v3/children")
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 # ---------------------------------------------------------------------------
