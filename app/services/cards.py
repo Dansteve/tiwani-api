@@ -167,6 +167,39 @@ def read_card_by_token(token: str, *, now: Optional[datetime] = None) -> Optiona
     return _with_freshness(content, now=now)
 
 
+def read_card_content_by_id(
+    user: AuthedUser, card_id: str, *, now: Optional[datetime] = None
+) -> Optional[CardContent]:
+    """The SAFE content of one of the caller's OWN cards, by card_id (auth, owner only).
+
+    The Card History "View" path: the owner re-opens a card they made. RLS-scoped (the
+    select filters by id AND user_id under the caller's token), so a card the caller does
+    not own is unreachable and reads as None (the route maps that to 404). Returns the
+    stored safe content with the read-time freshness note + is_stale merged in (the same
+    shaping the token read uses), so the owner sees exactly the card a helper would,
+    including the staleness signal. The share token is NEVER returned (viewing is not
+    re-sharing; a fresh share regenerates through create_card). `now` is injectable for
+    tests; defaults to UTC now.
+    """
+    client = get_anon_client(user.access_token)
+    row = _first(
+        client.table(CARD_RECORD_TABLE)
+        .select("content, created_at")
+        .eq("id", card_id)
+        .eq("user_id", user.id)
+        .limit(1)
+        .execute()
+    )
+    if row is None:
+        return None
+    content = CardContent.model_validate(row.get("content") or {})
+    if content.generated_at is None:
+        created = _parse_dt(row.get("created_at"))
+        if created is not None:
+            content = content.model_copy(update={"generated_at": created})
+    return _with_freshness(content, now=now)
+
+
 def list_cards(user: AuthedUser, *, now: Optional[datetime] = None) -> List[CardSummary]:
     """The caller's Continuity Cards, newest first, for the Card History screen.
 

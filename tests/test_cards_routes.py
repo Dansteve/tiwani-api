@@ -182,6 +182,61 @@ def test_get_card_by_token_never_leaks_pii(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# GET /cards/{card_id}/content (owner View) route + service
+# ---------------------------------------------------------------------------
+
+
+def test_read_owned_card_returns_content(authed, monkeypatch):
+    monkeypatch.setattr(
+        cards_routes.cards_service,
+        "read_card_content_by_id",
+        lambda user, card_id: SAFE_CONTENT,
+    )
+    response = authed.get("/api/v3/cards/card-1/content")
+    assert response.status_code == 200
+    assert response.json()["child_first_name"] == "Ade"
+
+
+def test_read_owned_card_not_found_is_404(authed, monkeypatch):
+    monkeypatch.setattr(
+        cards_routes.cards_service, "read_card_content_by_id", lambda user, card_id: None
+    )
+    assert authed.get("/api/v3/cards/not-mine/content").status_code == 404
+
+
+def test_read_owned_card_requires_auth(client):
+    # The owner View is auth-gated (401), unlike the public token read.
+    assert client.get("/api/v3/cards/card-1/content").status_code == 401
+
+
+def test_read_card_content_by_id_returns_owned_card(monkeypatch):
+    # The caller's own row is returned (RLS-scoped select by id + user_id); the stored
+    # content validates to CardContent and the staleness signal is merged in.
+    fake = FakeClient(
+        {
+            ("card_record", "select"): FakeResponse(
+                [
+                    {
+                        "content": SAFE_CONTENT.model_dump(mode="json"),
+                        "created_at": "2026-06-11T12:00:00+00:00",
+                    }
+                ]
+            )
+        }
+    )
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+    content = cards_service.read_card_content_by_id(AUTHED, "card-1")
+    assert content is not None and content.child_first_name == "Ade"
+
+
+def test_read_card_content_by_id_not_owned_is_none(monkeypatch):
+    # RLS makes another user's card invisible -> the select returns no row -> None (404).
+    fake = FakeClient({("card_record", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+    assert cards_service.read_card_content_by_id(AUTHED, "not-mine") is None
+
+
+# ---------------------------------------------------------------------------
 # SERVICE: ownership enforced on create
 # ---------------------------------------------------------------------------
 

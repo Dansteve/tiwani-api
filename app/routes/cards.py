@@ -109,6 +109,28 @@ def revoke_card(
     return CardRevoked(card=card)
 
 
+@router.get("/cards/{card_id}/content", response_model=CardContent)
+def read_owned_card(
+    card_id: str,
+    user: AuthedUser = Depends(get_current_user),
+) -> CardContent:
+    """Read one of the caller's OWN cards in full, by id (AUTH, owner; the View action).
+
+    The Card History "View": the owner re-opens a card they generated, by card_id (NOT the
+    share token), so viewing never enables re-sharing a stale link. RLS-scoped: a card the
+    caller does not own is a 404 (the row is invisible; we do not confirm it exists).
+    Returns the SAFE content (the first name + the plan) with the staleness signal, the
+    same shape a helper sees. 401 without a valid token.
+    """
+    content = cards_service.read_card_content_by_id(user, card_id)
+    if content is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Card not found",
+        )
+    return content
+
+
 @router.get("/cards/{token}", response_model=CardContent)
 def read_card(token: str) -> CardContent:
     """Read a shared Continuity Card by its token (NO auth, section 4.6 / 3.3).
