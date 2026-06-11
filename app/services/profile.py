@@ -29,6 +29,19 @@ USER_PROFILE_TABLE = "user_profile"
 CHILD_PROFILE_TABLE = "child_profile"
 
 
+class CareRecipientExistsError(Exception):
+    """Raised when a second care recipient create is attempted (route maps to 409).
+
+    Interim safety guard (Docs/FeatureDecisions.md, multi care recipient, step 1).
+    The dashboard, LCI, and alerts aggregate by user_id only, so a second
+    child_profile would silently pool two people into one mixed resilience score
+    (a Product.md section 4.8 / 4.9 correctness failure). Until the per-recipient
+    reads land, only the FIRST recipient may be created; a second distinct create
+    is rejected. There is no app UI to add a second recipient today, so the
+    corruption path is api-direct only, and this guard closes it.
+    """
+
+
 def _rows(response: Any) -> List[Dict[str, Any]]:
     """Return the list of rows from a Supabase execute() response.
 
@@ -148,7 +161,18 @@ def create_child(user: AuthedUser, fields: Dict[str, Any]) -> Dict[str, Any]:
     RLS insert policy additionally requires user_id == auth.uid(), so a row can
     only be created for the caller. tags Enum values are coerced to their string
     codes for storage.
+
+    Interim one-recipient guard (Docs/FeatureDecisions.md, step 1): if the caller
+    already has a care recipient, raise CareRecipientExistsError (the route maps
+    it to 409). This is the single create chokepoint, so the guard covers every
+    create path. complete_onboarding never reaches it on a returning user: it
+    only calls create_child when get_child(user) is None and otherwise updates,
+    so the first-child create and the onboarding/update paths are unaffected.
     """
+    if get_child(user) is not None:
+        raise CareRecipientExistsError(
+            "A care recipient already exists for this user"
+        )
     client = get_anon_client(user.access_token)
     insert_row = {**_serialize_child_fields(fields), "user_id": user.id}
     created = _first(client.table(CHILD_PROFILE_TABLE).insert(insert_row).execute())

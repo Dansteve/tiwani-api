@@ -10,6 +10,8 @@ read/create/update, the onboarding write, and the Enum -> code serialization.
 
 from typing import Optional
 
+import pytest
+
 import app.services.profile as svc
 from app.auth import AuthedUser
 from tests.fakes_supabase import FakeClient, FakeResponse
@@ -133,21 +135,33 @@ def test_get_child_returns_row_and_scopes_by_user(monkeypatch):
 
 def test_create_child_sets_user_id_from_session_not_client(monkeypatch):
     created = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
-    anon = FakeClient({("child_profile", "insert"): FakeResponse([created])})
+    # The one-recipient guard reads existing children first (none here), then inserts.
+    anon = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([]),
+            ("child_profile", "insert"): FakeResponse([created]),
+        }
+    )
     _patch_clients(monkeypatch, anon)
 
     # Even if a forged user_id is passed in fields, the service overrides it.
     result = svc.create_child(USER, {"name": "Sam", "user_id": "ATTACKER"})
 
     assert result == created
-    assert anon.calls[0]["payload"]["user_id"] == "u-1"
+    insert_call = next(c for c in anon.calls if c["op"] == "insert")
+    assert insert_call["payload"]["user_id"] == "u-1"
 
 
 def test_create_child_serializes_enum_tags_to_codes(monkeypatch):
     from app.models.child_profile import SupportLevelCode, Tag
 
     created = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
-    anon = FakeClient({("child_profile", "insert"): FakeResponse([created])})
+    anon = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([]),
+            ("child_profile", "insert"): FakeResponse([created]),
+        }
+    )
     _patch_clients(monkeypatch, anon)
 
     svc.create_child(
@@ -159,10 +173,45 @@ def test_create_child_serializes_enum_tags_to_codes(monkeypatch):
         },
     )
 
-    payload = anon.calls[0]["payload"]
+    insert_call = next(c for c in anon.calls if c["op"] == "insert")
+    payload = insert_call["payload"]
     # Enums are stored as their plain string codes (text / text[] columns).
     assert payload["support_level_code"] == "SL-HIGH"
     assert payload["tags"] == ["SN-NOISE", "TR-CHANGE"]
+
+
+# --- one-recipient guard (Docs/FeatureDecisions.md, step 1) ----------------
+
+
+def test_create_child_rejects_second_recipient(monkeypatch):
+    # A recipient already exists for the caller: the guard reads it (the select)
+    # and the create must raise CareRecipientExistsError WITHOUT ever inserting.
+    existing = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
+    anon = FakeClient({("child_profile", "select"): FakeResponse([existing])})
+    _patch_clients(monkeypatch, anon)
+
+    with pytest.raises(svc.CareRecipientExistsError):
+        svc.create_child(USER, {"name": "Second"})
+
+    # No insert was attempted (no second row could be written).
+    assert not any(c["op"] == "insert" for c in anon.calls)
+
+
+def test_create_child_allows_first_recipient(monkeypatch):
+    # No recipient yet: the guard passes and the FIRST create still succeeds.
+    created = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
+    anon = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([]),
+            ("child_profile", "insert"): FakeResponse([created]),
+        }
+    )
+    _patch_clients(monkeypatch, anon)
+
+    result = svc.create_child(USER, {"name": "Sam"})
+
+    assert result == created
+    assert any(c["op"] == "insert" for c in anon.calls)
 
 
 def test_update_child_scopes_by_id_and_user(monkeypatch):
@@ -249,3 +298,29 @@ def test_complete_onboarding_updates_existing_child(monkeypatch):
         c for c in anon.calls if c["table"] == "child_profile" and c["op"] == "update"
     ]
     assert update_child_calls and ("id", "c-1") in update_child_calls[0]["filters"]
+
+
+def test_complete_onboarding_returning_user_does_not_trigger_recipient_guard(monkeypatch):
+    # A returning user re-running onboarding takes the UPDATE branch, so the
+    # one-recipient guard (which only fires inside create_child) is never reached:
+    # complete_onboarding must succeed with no child_profile insert and no raise.
+    existing_child = {"id": "c-1", "user_id": "u-1", "name": "Old"}
+    updated_child = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
+    profile_row = {"id": "u-1", "first_name": "Ada", "onboarding_complete": True}
+    anon = FakeClient(
+        {
+            ("user_profile", "select"): [FakeResponse({"id": "u-1", "first_name": "Ada"})],
+            ("child_profile", "select"): FakeResponse([existing_child]),
+            ("child_profile", "update"): FakeResponse([updated_child]),
+            ("user_profile", "update"): FakeResponse([profile_row]),
+        }
+    )
+    _patch_clients(monkeypatch, anon)
+
+    result = svc.complete_onboarding(USER, {"name": "Sam", "support_level_code": "SL-LOW", "tags": []})
+
+    assert result["child"] == updated_child
+    # No child_profile insert happened (no second recipient created).
+    assert not any(
+        c["table"] == "child_profile" and c["op"] == "insert" for c in anon.calls
+    )

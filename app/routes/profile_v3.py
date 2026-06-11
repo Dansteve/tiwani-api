@@ -88,8 +88,21 @@ def create_child(
 
     user_id is taken from the session, never the client; the RLS insert policy
     requires user_id == auth.uid(), so the row can only belong to the caller.
+
+    Interim one-recipient guard (Docs/FeatureDecisions.md, step 1): a SECOND
+    create is rejected with 409 (the service raises CareRecipientExistsError);
+    the first create, onboarding, and the update path are unaffected.
     """
-    row = profile_service.create_child(user, payload.model_dump())
+    try:
+        row = profile_service.create_child(user, payload.model_dump())
+    except profile_service.CareRecipientExistsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Only one care recipient is supported right now. "
+                "Managing more than one is coming soon."
+            ),
+        ) from exc
     return ChildProfile.model_validate(row)
 
 
