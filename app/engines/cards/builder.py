@@ -26,7 +26,8 @@ the engine already ran). It only shapes and guards the helper-facing copy.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from app.engines.alerts.guard import assert_clean
 from app.models.card import CardContent, CardStrategy
@@ -93,6 +94,33 @@ _SAFETY_NOTE = (
     "wellbeing, contact the family straight away, and call 999 in an emergency."
 )
 
+# The freshness note shown on EVERY card (the clinical board's MANDATORY staleness
+# finding). A card is a point-in-time SNAPSHOT: the care recipient's needs, profile, and
+# the strategies that help all change over time, so an old card can hand a NEW helper
+# advice that no longer fits. This line names the date the plan was prepared and asks a
+# helper to request an up-to-date version if the card is more than a few weeks old. Calm,
+# non-clinical, non-coercive (it defers to the family, it instructs no medical step), and
+# run through the shared guard like every other line. {date} is the prepared date.
+#
+# REVIEW-DEFERRED: this exact wording AND the freshness threshold (CARD_FRESHNESS_DAYS in
+# app/services/cards.py, the is_stale window) are the MECHANISM plus reasonable governed
+# copy; the final ratified wording and threshold are deferred to the psychiatrist
+# card-copy sign-off (the board marked them deferred).
+_FRESHNESS_NOTE = (
+    "This plan was prepared on {date}. A child's needs change over time, so if this is "
+    "more than a few weeks old, please ask the family for an up to date version."
+)
+
+
+def _format_prepared_date(when: datetime) -> str:
+    """A readable prepared-date for the freshness note, e.g. "5 June 2026".
+
+    No leading zero on the day and no em or en dashes (writing conventions). Used only
+    for the human-facing freshness sentence; the machine-readable generated_at carries
+    the full timestamp.
+    """
+    return f"{when.day} {when.strftime('%B %Y')}"
+
 
 def first_name_only(full_name: str) -> str:
     """The first name from a stored name, the ONLY part of the name a card may show.
@@ -129,7 +157,26 @@ def _card_strategies(stored_strategies: Any) -> List[CardStrategy]:
     return out
 
 
-def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent:
+def build_freshness_note(generated_at: datetime) -> str:
+    """The governed, guarded freshness line for a card prepared at generated_at.
+
+    Names the prepared date in plain words and asks for an up-to-date version if the
+    card is old (the staleness finding). Run through the SHARED non-clinical guard
+    before it is returned, like every other card string. Exposed separately so the
+    read path can backfill the line for a card stored before this field existed,
+    without re-assembling the whole card or mutating the stored row.
+    """
+    note = _FRESHNESS_NOTE.format(date=_format_prepared_date(generated_at))
+    assert_clean(note)
+    return note
+
+
+def build_card_content(
+    activity: Dict[str, Any],
+    child_name: str,
+    *,
+    generated_at: Optional[datetime] = None,
+) -> CardContent:
     """Assemble the SAFE Continuity Card content for an activity (section 4.6).
 
     Pure: given the stored activity_record row (chapter, activity_name, tier,
@@ -137,22 +184,31 @@ def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent
     CardContent, using the FIRST name only. The tier is taken from the stored record
     (the engine already ran; nothing is re-scored here) and expressed in plain words.
 
-    Every emitted string (the intro, the tier label, each strategy title and detail,
-    the if-difficult line) is run through the SHARED non-clinical guard
-    (app/engines/alerts/guard.py) before the content is returned, so a prohibited
-    clinical word, whether in the fixed copy or in a stored strategy, can never leave
-    this module onto a shared card. A violation raises ProhibitedWordError (a
-    governance error to fix, never silently scrubbed).
+    generated_at is the moment the card is being prepared (the card_record.created_at).
+    It anchors the freshness note (the prepared date) and is carried back as
+    CardContent.generated_at so the app can show the card's age. is_stale is NOT set
+    here (it is a read-time computation against the freshness window, done by the
+    service / the token read function): a freshly built card is, by definition, not
+    stale, so it stays at the model default False.
+
+    Every governed string (the intro, the tier label, each strategy title and detail,
+    the if-difficult line, the safety note, the freshness note) is run through the
+    SHARED non-clinical guard (app/engines/alerts/guard.py) before the content is
+    returned, so a prohibited clinical word, whether in the fixed copy or in a stored
+    strategy, can never leave this module onto a shared card. A violation raises
+    ProhibitedWordError (a governance error to fix, never silently scrubbed).
     """
     first_name = first_name_only(child_name)
     tier = Tier(activity["tier"])
     chapter = Chapter(activity["chapter"])
     activity_name = activity["activity_name"]
+    prepared_at = generated_at if generated_at is not None else datetime.now(timezone.utc)
 
     tier_label = _TIER_PLAIN_LABEL[tier]
     intro = _TIER_INTRO[tier].format(name=first_name)
     if_difficult = _IF_DIFFICULT.format(name=first_name)
     safety_note = _SAFETY_NOTE.format(name=first_name)
+    freshness_note = _FRESHNESS_NOTE.format(date=_format_prepared_date(prepared_at))
     strategies = _card_strategies(activity.get("strategies"))
 
     # The shared non-clinical guard over EVERY helper-facing string: the same guard the
@@ -165,6 +221,7 @@ def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent
         intro,
         if_difficult,
         safety_note,
+        freshness_note,
         *[s.title for s in strategies],
         *[s.detail for s in strategies],
     )
@@ -179,4 +236,6 @@ def build_card_content(activity: Dict[str, Any], child_name: str) -> CardContent
         strategies=strategies,
         if_difficult=if_difficult,
         safety_note=safety_note,
+        freshness_note=freshness_note,
+        generated_at=prepared_at,
     )

@@ -27,11 +27,13 @@ screened by a clinical reviewer and must stay non-clinical and non-coercive.
 from app.engines.cards.builder import (
     MAX_CARD_STRATEGIES,
     build_card_content,
+    build_freshness_note,
     first_name_only,
 )
 
 __all__ = [
     "build_card_content",
+    "build_freshness_note",
     "first_name_only",
     "MAX_CARD_STRATEGIES",
 ]

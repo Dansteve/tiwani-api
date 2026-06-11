@@ -13,10 +13,17 @@ activity_record + the care recipient's name, so it gets straight, no-DB tests:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.engines.alerts.guard import ProhibitedWordError
-from app.engines.cards import MAX_CARD_STRATEGIES, build_card_content, first_name_only
+from app.engines.cards import (
+    MAX_CARD_STRATEGIES,
+    build_card_content,
+    build_freshness_note,
+    first_name_only,
+)
 
 
 def _activity(**overrides):
@@ -165,7 +172,43 @@ def test_build_card_trips_the_guard_on_a_prohibited_word_in_the_activity_name():
 
 
 def test_build_card_clean_copy_passes_the_guard():
-    # The fixed copy (intro, tier label, if-difficult) is itself clean: a normal card
-    # builds without tripping the guard.
+    # The fixed copy (intro, tier label, if-difficult, safety, freshness) is itself
+    # clean: a normal card builds without tripping the guard.
     content = build_card_content(_activity(), "Ade")
     assert content is not None
+
+
+# ---------------------------------------------------------------------------
+# the freshness note + the read-time staleness anchor (the staleness finding)
+# ---------------------------------------------------------------------------
+
+
+def test_build_card_includes_a_freshness_note_naming_the_prepared_date():
+    # The clinical board's MANDATORY staleness finding: every card carries a governed
+    # line naming the date it was prepared and asking for an up-to-date version if old.
+    # The date is formatted readably with no leading zero and no en/em dashes.
+    when = datetime(2026, 6, 5, 9, 30, tzinfo=timezone.utc)
+    content = build_card_content(_activity(), "Ade", generated_at=when)
+    assert content.freshness_note
+    assert "5 June 2026" in content.freshness_note
+    assert "-" not in content.freshness_note  # no en/em dashes (writing convention)
+    # generated_at is carried back so the app can show the card's age.
+    assert content.generated_at == when
+    # A freshly built card is, by definition, not stale (is_stale is a read-time signal).
+    assert content.is_stale is False
+
+
+def test_build_card_freshness_note_passes_the_shared_guard():
+    # The freshness line is governed copy and is run through the SHARED non-clinical guard
+    # like every other card string; the standalone builder is guarded too.
+    note = build_freshness_note(datetime(2026, 1, 1, tzinfo=timezone.utc))
+    assert note  # clean copy returns; a prohibited word would raise ProhibitedWordError
+    assert "1 January 2026" in note
+
+
+def test_build_card_defaults_generated_at_when_not_given():
+    # With no explicit generated_at the builder stamps "now", so the card always has a
+    # freshness note and a generated_at (the create path always passes the real value).
+    content = build_card_content(_activity(), "Ade")
+    assert content.generated_at is not None
+    assert content.freshness_note

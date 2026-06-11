@@ -1,33 +1,52 @@
-"""v3 Continuity Card routes (the shareable support summary).
+"""v3 Continuity Card routes (the shareable support summary + Card History).
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse and validate, call the cards service
-(which verifies ownership, assembles the SAFE content, stores the card, or reads one
-by token), serialize. The Continuity Card (Product.md section 4.6) is a one-page
-support summary a Coordinator generates for a HELPER and shares via a link that needs
-NO account.
+(which verifies ownership, assembles the SAFE content, stores / lists / revokes a card,
+or reads one by token), serialize. The Continuity Card (Product.md section 4.6) is a
+one-page support summary a Coordinator generates for a HELPER and shares via a link that
+needs NO account; Card History lets the Coordinator see and manage the cards they made.
 
-Two routes with very different trust:
-  POST /api/v3/cards            AUTH REQUIRED. Body {activity_id}. Verifies the
-                               activity belongs to the caller, creates the card, and
-                               returns the content + share token + expiry. 404 if the
-                               activity is not the caller's (we do not confirm it
-                               exists). 401 without a valid bearer token.
-  GET  /api/v3/cards/{token}    NO AUTH. The helper opens the share link. Returns ONLY
-                               the safe content (first name, activity, tier, intro,
-                               strategies, if-difficult) if the token is valid and not
-                               expired, else 404. Never returns user_id / child_id or
-                               any other row: the read goes through the SECURITY
-                               DEFINER function (migration 0007), not a table select.
+The routes, by trust:
+  POST   /api/v3/cards                   AUTH REQUIRED. Body {activity_id}. Verifies the
+                                         activity belongs to the caller, creates the card,
+                                         returns content + share token + expiry. 404 if
+                                         the activity is not the caller's. 401 without a
+                                         valid bearer token.
+  GET    /api/v3/cards                   AUTH REQUIRED. The caller's Card History: their
+                                         own cards, newest first, each with status
+                                         (active / expired / revoked) and the staleness
+                                         signal. RLS-scoped to the caller. 401 without a
+                                         valid token.
+  POST   /api/v3/cards/{card_id}/revoke  AUTH REQUIRED, owner only. SOFT-revokes the
+                                         caller's card (sets revoked_at; the audit row is
+                                         kept). 404 if the card is not the caller's. After
+                                         it returns, the public token read 404s.
+  GET    /api/v3/cards/{token}           NO AUTH. The helper opens the share link. Returns
+                                         ONLY the safe content if the token is valid, not
+                                         expired, AND not revoked, else 404. Never returns
+                                         user_id / child_id or any other row: the read goes
+                                         through the SECURITY DEFINER function (migrations
+                                         0007 + 0008), not a table select.
 
-Registered under /api/v3 in main.py. The owner path is user-scoped through the service
-with Supabase RLS as the backstop; the token path is the only unauthenticated read and
-is deliberately narrow.
+Registered under /api/v3 in main.py. The owner paths are user-scoped through the service
+with Supabase RLS as the backstop; the token path is the only unauthenticated read and is
+deliberately narrow. Note the path order: GET /cards (the list) and the {card_id}/revoke
+route are declared before GET /cards/{token}, but FastAPI matches the static and the more
+specific paths first regardless, so the token read never shadows them.
 """
+
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import AuthedUser, get_current_user
-from app.models.card import CardContent, CardCreated, CreateCardRequest
+from app.models.card import (
+    CardContent,
+    CardCreated,
+    CardRevoked,
+    CardSummary,
+    CreateCardRequest,
+)
 from app.services import cards as cards_service
 
 router = APIRouter()
@@ -53,6 +72,41 @@ def create_card(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Activity not found",
         ) from exc
+
+
+@router.get("/cards", response_model=List[CardSummary])
+def list_cards(user: AuthedUser = Depends(get_current_user)) -> List[CardSummary]:
+    """List the caller's Continuity Cards, newest first (the Card History screen).
+
+    Returns the caller's own cards (RLS-scoped), each as a CardSummary with the activity,
+    the care recipient's first name, the chapter, the created/expiry timestamps, the
+    status (active / expired / revoked, computed at read time), and the staleness signal
+    (generated_at + is_stale). 401 without a valid token.
+    """
+    return cards_service.list_cards(user)
+
+
+@router.post("/cards/{card_id}/revoke", response_model=CardRevoked)
+def revoke_card(
+    card_id: str,
+    user: AuthedUser = Depends(get_current_user),
+) -> CardRevoked:
+    """Soft-revoke one of the caller's Continuity Cards (owner only, section 4.6).
+
+    Sets revoked_at = now() on the caller's card (the audit row is KEPT, never deleted),
+    so the public share link dies immediately (the token read function excludes revoked
+    rows). Returns the updated card as a CardSummary with status REVOKED. 404 if the card
+    is not the caller's (the row is invisible under RLS; we do not confirm it exists).
+    401 without a valid token.
+    """
+    try:
+        card = cards_service.revoke_card(user, card_id)
+    except cards_service.CardNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Card not found",
+        ) from exc
+    return CardRevoked(card=card)
 
 
 @router.get("/cards/{token}", response_model=CardContent)
