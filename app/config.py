@@ -1,4 +1,6 @@
 import os
+from typing import List
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -15,10 +17,15 @@ class Settings(BaseSettings):
     # Postgres database for SQLAlchemy
     DATABASE_URL: str = ""
 
-    # JWT Auth (Used for local verification if needed, or fallback)
-    JWT_SECRET: str = "supersecretjwtkeytiwani2026"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    # CORS allowed origins as a comma-separated string from the environment.
+    # Defaults to the local app and website dev origins. Read the parsed list
+    # via the cors_allow_origins property.
+    CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+
+    @computed_field
+    @property
+    def cors_allow_origins(self) -> List[str]:
+        return [origin.strip() for origin in self.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env",
