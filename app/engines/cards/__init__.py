@@ -1,24 +1,37 @@
-"""Continuity Card: a one-page shareable support plan. STUB, NO LOGIC YET.
+"""Continuity Card engine: assemble a one-page shareable support summary.
 
 Spec: Product.md section 4.6. Module file: HardRules/Api/Modules/Cards.md.
-Data objects: HardRules/Api/Modules/Models.md (continuity_card).
+Data objects: HardRules/Api/Modules/Models.md (continuity_card / card_record).
 
-What it will be: a TIWANI-branded one-pager (Deep Teal #04342C, Coral #D85A30
-accents) produced SERVER-SIDE as a PDF plus a shareable web link valid for 30
-days. Target under 5 seconds to generate.
+What it is: a one-page support summary a Coordinator generates for a HELPER (a
+babysitter, teacher, or respite carer) and shares via a link that needs NO account.
+It restates one activity's plan, the participation tier, and the top strategies in
+plain, warm, NON-CLINICAL words so a helper who has never met the care recipient can
+support them well.
 
-Contents in order (section 4.6): care recipient's first name only, activity +
-date, participation approach, what helps, what to avoid, how they communicate,
-the full strategy list written for an outsider, an "if things get difficult"
-line, an optional Coordinator contact, and a QR code to tiwanilife.com/?ref=card.
+This package is the PURE assembler (app/engines/cards/builder.py): given a stored
+activity_record + the care recipient's name it shapes the SAFE CardContent, using the
+FIRST name only, and runs every helper-facing string through the SHARED non-clinical
+guard (app/engines/alerts/guard.py: one prohibited-words definition, reused, not a
+second guard). The data layer (verify ownership, generate the token, store the
+card_record, read by token) is app/services/cards.py; the routes are
+app/routes/cards.py; the table + the careful token read path are migration
+0007_card_record.sql.
 
-PRIVACY HARD RULES (Cards.md):
-  - the share link and the QR code carry ZERO PII: the share URL is an opaque
-    token; the QR points only to the marketing site with a ref param
-  - contact details appear only if the Coordinator opts in (include_contact on
-    the continuity_card; default is no contact)
-  - the link expires after 30 days, enforced server-side
-
-Generation depends on a prepared plan (the LCE output), so it is BLOCKED behind
-the LCE (SeedData.md Q7).
+SAFETY (HardRules/Api/Modules/Cards.md): the share link carries ZERO PII beyond the
+first name (an opaque token + the safe content); contact details are out of scope for
+this surface; the link expires after 30 days, enforced server-side. The card copy is
+screened by a clinical reviewer and must stay non-clinical and non-coercive.
 """
+
+from app.engines.cards.builder import (
+    MAX_CARD_STRATEGIES,
+    build_card_content,
+    first_name_only,
+)
+
+__all__ = [
+    "build_card_content",
+    "first_name_only",
+    "MAX_CARD_STRATEGIES",
+]

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import auth, user, children, chapters
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts
+from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -50,6 +50,11 @@ app.include_router(lci.router, prefix="/api/v3", tags=["v3 Life Continuity Index
 # 12): list the active alerts and dismiss one. Evaluated server-side after every
 # pulse. Registered under /api/v3 behind current-user.
 app.include_router(alerts.router, prefix="/api/v3", tags=["v3 Erosion Alerts"])
+# The Continuity Card (section 4.6): generate a shareable one-page support summary for
+# a helper (POST, auth) and read one by its share token (GET, NO auth, the helper has
+# no account). Registered under /api/v3; the token read is the only unauthenticated
+# route and is narrow by design (migration 0007 SECURITY DEFINER function).
+app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
 
 @app.get("/")
 async def root():

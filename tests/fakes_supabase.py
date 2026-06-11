@@ -98,8 +98,45 @@ class FakeQuery:
         return FakeResponse(scripted)
 
 
+class FakeRpc:
+    """A recording RPC call: execute() returns the scripted response for the function.
+
+    Mirrors client.rpc(fn, params).execute(). The function-call path (the Continuity
+    Card token read goes through the SECURITY DEFINER function get_card_by_token) is
+    scripted under the ("rpc", fn_name) key, alongside the table scripts.
+    """
+
+    def __init__(
+        self,
+        fn: str,
+        params: Any,
+        log: List[Dict[str, Any]],
+        scripts: Dict[Tuple[str, str], Any],
+    ):
+        self._fn = fn
+        self._params = params
+        self._log = log
+        self._scripts = scripts
+
+    def execute(self) -> FakeResponse:
+        self._log.append({"rpc": self._fn, "params": self._params})
+        key = ("rpc", self._fn)
+        if key not in self._scripts:
+            raise AssertionError(f"No scripted Supabase response for {key}")
+        scripted = self._scripts[key]
+        if isinstance(scripted, list) and scripted and isinstance(scripted[0], FakeResponse):
+            return scripted.pop(0)
+        if isinstance(scripted, FakeResponse):
+            return scripted
+        return FakeResponse(scripted)
+
+
 class FakeClient:
-    """A fake Supabase client whose table(name) returns a recording FakeQuery."""
+    """A fake Supabase client whose table(name) returns a recording FakeQuery.
+
+    rpc(fn, params) returns a recording FakeRpc for the function-call path (the
+    SECURITY DEFINER token read), scripted under the ("rpc", fn_name) key.
+    """
 
     def __init__(self, scripts: Dict[Tuple[str, str], Any]):
         self.scripts = scripts
@@ -107,3 +144,6 @@ class FakeClient:
 
     def table(self, name: str) -> FakeQuery:
         return FakeQuery(name, self.calls, self.scripts)
+
+    def rpc(self, fn: str, params: Any = None) -> FakeRpc:
+        return FakeRpc(fn, params, self.calls, self.scripts)
