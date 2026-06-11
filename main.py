@@ -2,7 +2,6 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import auth, user, children, chapters
 from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards
 
 app = FastAPI(
@@ -25,16 +24,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(user.router, prefix="/api/user", tags=["User Profile"])
-app.include_router(children.router, prefix="/api/children", tags=["Children Management"])
-app.include_router(chapters.router, prefix="/api/chapters", tags=["Chapters & Triggers"])
-
 # v3 surface (clean rebuild, Docs/Decisions.md D2): profile, care recipient,
 # onboarding, and the six-chapter dashboard, behind the Supabase-Auth current-user
-# dependency. Registered under /api/v3 alongside the prototype /api/* routes, which
-# are replaced in later tasks.
+# dependency. The pre-v3 prototype routers (auth/user/children/chapters) are
+# un-mounted (CTO audit B1): they queried unmanaged tables through a no-token anon
+# client that RLS did not scope, so only the RLS-scoped v3 surface is mounted.
 app.include_router(profile_v3.router, prefix="/api/v3", tags=["v3 Profile & Onboarding"])
 app.include_router(chapters_v3.router, prefix="/api/v3", tags=["v3 Dashboard Chapters"])
 # The Life Continuity Engine endpoints (Product.md section 4.4): prepare a plan and
@@ -56,8 +50,11 @@ app.include_router(alerts.router, prefix="/api/v3", tags=["v3 Erosion Alerts"])
 # route and is narrow by design (migration 0007 SECURITY DEFINER function).
 app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
 
+# Health check: the root "/" and "/health" are the same endpoint (Render's health
+# check and any uptime pinger can hit either). Returns 200 with a small status body.
 @app.get("/")
-async def root():
+@app.get("/health")
+async def health():
     return {
         "message": "Welcome to the Tiwani API",
         "status": "healthy",
