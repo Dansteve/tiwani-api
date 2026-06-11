@@ -1,0 +1,32 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+# A sensible baseline: pycodestyle errors/warnings (E, W), Pyflakes (F),
+# and import sorting (I). This holds all new code (including tests/) to a
+# clean bar without rewriting the pre-v3 prototype.
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# The existing prototype is being rebuilt to PRD v3 (see Docs/Decisions.md),
+# and is authored by multiple developers. To keep ruff green as a pure,
+# additive safety net, the legacy files are exempted from the specific rules
+# they currently violate rather than mass-edited here. New code under tests/
+# (and anything added later outside this list) is linted in full.
+"main.py" = ["I001"]
+"app/config.py" = ["F401", "I001", "W293"]
+"app/database.py" = ["I001"]
+"app/models/chapter.py" = ["E501", "F401", "I001"]
+"app/models/child.py" = ["I001"]
+"app/models/user.py" = ["I001"]
+"app/routes/__init__.py" = ["F401", "I001"]
+"app/routes/auth.py" = ["E501", "F401", "F841", "I001", "W293"]
+"app/routes/chapters.py" = ["E501", "I001", "W291", "W293"]
+"app/routes/children.py" = ["E501", "I001", "W293"]
+"app/routes/user.py" = ["E501", "I001", "W291", "W293"]
