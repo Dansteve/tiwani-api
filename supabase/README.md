@@ -30,11 +30,11 @@ build posture), so nothing in the running api reads the old prototype tables
 surface is `/api/v3`, backed solely by the tables in this directory.
 
 These migrations never created, dropped, or altered the prototype tables (they
-only added the v3 tables), so whether the old `profiles` / `children` /
-`chapters` / `triggers` tables still PHYSICALLY exist in the production database
-is not verified here. Dropping any leftover prototype tables is a **separate
-cleanup to confirm** (a future drop migration), not done by anything in this
-list; it has no effect on the api, which no longer references them.
+only added the v3 tables). Verified against the production database on 2026-06-12:
+the old `profiles` / `children` / `chapters` / `triggers` tables **do not exist**
+in production (they were already removed), with no foreign-key or view
+dependencies on them. So there is nothing left to drop and no cleanup migration is
+needed; the v3 tables in this directory are the whole schema.
 
 ## Migrations
 
