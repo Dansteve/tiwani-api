@@ -15,7 +15,19 @@ Error contract (HardRules/Api/SETUP.md): a missing or invalid token is 401. A
 cross-user access attempt is 404 and is enforced downstream by RLS plus
 user-scoped queries, not here (this dependency only authenticates).
 
-Usage on a data route:
+Account closure (soft-delete): a Coordinator can CLOSE their account, which sets
+user_profile.deleted_at (the data is retained, not hard-deleted; migration 0013).
+A closed account must be unable to read or write. get_current_user is the
+chokepoint that enforces this: after the token resolves to a user, it reads that
+user's own user_profile.deleted_at under RLS and, if it is set, raises 410 Gone.
+Because every v3 data route depends on get_current_user, a soft-deleted account is
+blocked everywhere at once (fail-safe: a new route gets the block for free). The
+two SELF-SERVICE account routes (GET /me/export, POST /me/delete) must still work
+for a user acting on their own account, so they depend on
+get_current_user_allow_deleted instead, which authenticates WITHOUT the block (so
+the export reads up to the moment of closure and the delete stays idempotent).
+
+Usage on a normal data route (blocked if the account is closed):
 
     from fastapi import Depends
     from app.auth import AuthedUser, get_current_user
@@ -25,8 +37,8 @@ Usage on a data route:
         client = get_anon_client(user.access_token)  # RLS-scoped to this user
         ...
 
-This module is import-safe and makes no network call at import time; the call to
-Supabase happens only inside the dependency, per request.
+This module is import-safe and makes no network call at import time; the calls to
+Supabase happen only inside the dependency, per request.
 """
 
 from dataclasses import dataclass
@@ -56,10 +68,17 @@ class AuthedUser:
     access_token: str
 
 
-def get_current_user(
+def get_current_user_allow_deleted(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> AuthedUser:
-    """Resolve the bearer token to the current user, or raise 401.
+    """Resolve the bearer token to the current user, or raise 401. NO soft-delete block.
+
+    Pure authentication: it validates the token and returns the AuthedUser, but does
+    NOT check whether the account is closed (soft-deleted). The two self-service
+    account routes (GET /me/export, POST /me/delete) depend on this so a user can act
+    on their OWN account: export reads up to the moment of closure, and delete is
+    idempotent (a deleted account can re-issue the soft-delete without being blocked).
+    Every OTHER data route depends on get_current_user, which adds the closure block.
 
     Raises 401 when the Authorization header is missing, malformed, or carries a
     token Supabase cannot validate (expired, tampered, or for another project).
@@ -94,3 +113,29 @@ def get_current_user(
         )
 
     return AuthedUser(id=user.id, email=getattr(user, "email", None), access_token=token)
+
+
+def get_current_user(
+    user: AuthedUser = Depends(get_current_user_allow_deleted),
+) -> AuthedUser:
+    """Resolve the current user AND reject a closed (soft-deleted) account with 410.
+
+    The default dependency for every v3 data route. It authenticates via
+    get_current_user_allow_deleted, then reads the caller's OWN user_profile.deleted_at
+    under RLS (get_anon_client(user.access_token), so the read can only ever see the
+    caller's row). If deleted_at is set, the account has been closed (migration 0013);
+    the request is rejected with 410 Gone, so a soft-deleted account can neither read
+    nor write. A user with no profile row yet (a fresh sign-up before the profile is
+    created) is treated as active. The deleted-account service owns the column read so
+    the policy lives in one place (app/services/account).
+    """
+    # Imported here (not at module load) to keep this module import-safe and avoid a
+    # cycle: app.services.account imports nothing from app.auth at import time.
+    from app.services import account as account_service
+
+    if account_service.is_account_deleted(user):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="This account has been closed",
+        )
+    return user

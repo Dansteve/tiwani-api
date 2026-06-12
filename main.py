@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards
+from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -49,6 +49,13 @@ app.include_router(alerts.router, prefix="/api/v3", tags=["v3 Erosion Alerts"])
 # no account). Registered under /api/v3; the token read is the only unauthenticated
 # route and is narrow by design (migration 0007 SECURITY DEFINER function).
 app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
+# Self-service account (data rights): export the caller's own data as a downloadable
+# JSON document, and CLOSE the account (a SOFT delete that sets user_profile.deleted_at;
+# the data is retained per the retention policy). Both routes are RLS-scoped to the caller
+# and use the allow-deleted authenticator so they work around the moment of closure; every
+# OTHER v3 route rejects a closed account with 410 (the soft-delete block in
+# get_current_user). Registered under /api/v3 behind the current-user dependency.
+app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (export & delete)"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.
