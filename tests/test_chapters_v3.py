@@ -56,12 +56,22 @@ def authed(client, monkeypatch):
     tests/test_pulse_lci_routes.py.
     """
     client.app.dependency_overrides[get_current_user] = lambda: AUTHED
-    chapters_fake = FakeClient({("activity_record", "select"): FakeResponse([])})
+    # The dashboard now resolves the caller's care recipient first (profile layer). For
+    # the fresh-user baseline there is NO recipient yet: the resolver returns None, so the
+    # per-recipient reads are skipped and every chapter stays not-started. The empty
+    # child_profile select is served from the chapters client (which the resolver shares).
+    chapters_fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([]),
+            ("activity_record", "select"): FakeResponse([]),
+        }
+    )
     lci_fake = FakeClient({("pulse_record", "select"): FakeResponse([])})
     alerts_fake = FakeClient({("alert_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.chapters.get_anon_client", lambda token=None: chapters_fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: lci_fake)
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: alerts_fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: chapters_fake)
     yield client
     client.app.dependency_overrides.pop(get_current_user, None)
 

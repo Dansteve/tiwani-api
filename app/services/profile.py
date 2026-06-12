@@ -42,6 +42,15 @@ class CareRecipientExistsError(Exception):
     """
 
 
+class ChildNotFoundError(Exception):
+    """Raised when an explicit child_id is not one the caller owns (route -> 404).
+
+    The per-recipient resolver (resolve_child_id) raises this when a caller names a
+    child_id that is not theirs: RLS makes another user's child_profile invisible, so
+    the ownership read returns nothing and we do not confirm whether the row exists.
+    """
+
+
 def _rows(response: Any) -> List[Dict[str, Any]]:
     """Return the list of rows from a Supabase execute() response.
 
@@ -141,6 +150,10 @@ def get_child(user: AuthedUser) -> Optional[Dict[str, Any]]:
     The MVP models one active recipient per user; this returns the most recently
     created row (defensive if more than one ever exists). RLS scopes the read to
     the caller's rows, so it can never surface another user's recipient.
+
+    This is the SOLE-CHILD default reader: resolve_child_id calls it when no explicit
+    child_id is named (back-compat while the one-recipient guard holds), and the
+    onboarding write still uses it to decide create-vs-update.
     """
     client = get_anon_client(user.access_token)
     rows = _rows(
@@ -152,6 +165,71 @@ def get_child(user: AuthedUser) -> Optional[Dict[str, Any]]:
         .execute()
     )
     return rows[0] if rows else None
+
+
+def list_children(user: AuthedUser) -> List[Dict[str, Any]]:
+    """The caller's care recipients, newest first (RLS-scoped).
+
+    The read behind GET /api/v3/children, the list the future app switcher reads to
+    offer the active recipient. The select filters by user_id and runs under the
+    caller's token, so Row Level Security makes another user's recipients physically
+    unreachable: this can only ever return the caller's own children. Ordered by
+    created_at descending so the newest recipient is first. Today the one-recipient
+    guard means this is a single-element (or empty) list; it is already correct for
+    several recipients once the guard is lifted.
+    """
+    client = get_anon_client(user.access_token)
+    return _rows(
+        client.table(CHILD_PROFILE_TABLE)
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+
+def get_child_by_id(user: AuthedUser, child_id: str) -> Optional[Dict[str, Any]]:
+    """The caller's care recipient by id (RLS-scoped), or None if not theirs.
+
+    Filters by id AND user_id under the caller's token, so RLS plus the explicit
+    user_id filter make another user's recipient unreachable: a forged child_id matches
+    nothing and returns None. The ownership check behind resolve_child_id.
+    """
+    client = get_anon_client(user.access_token)
+    return _first(
+        client.table(CHILD_PROFILE_TABLE)
+        .select("*")
+        .eq("id", child_id)
+        .eq("user_id", user.id)
+        .limit(1)
+        .execute()
+    )
+
+
+def resolve_child_id(user: AuthedUser, child_id: Optional[str] = None) -> Optional[str]:
+    """Resolve WHICH care recipient a per-recipient read/write is for (the chokepoint).
+
+    The single-recipient chokepoint that replaces "just read the sole child". Every
+    per-recipient read (the dashboard, LCI, alerts) and the post-pulse recompute resolves
+    the target child_id through this, so the isolation rule (one named recipient per
+    read, never a mix) holds in one place:
+
+      - child_id given: VERIFY the caller owns it (get_child_by_id under RLS). If they do,
+        return it; if not, raise ChildNotFoundError (the route maps to 404). A caller can
+        never address another user's recipient, even by guessing an id.
+      - child_id omitted: fall back to the caller's SOLE child (get_child). This is the
+        back-compat default while the one-recipient guard holds (there is at most one), so
+        existing clients that send no child_id keep working and read that one recipient.
+      - no child at all: return None (a fresh user with no recipient yet); the callers
+        treat None as "no data" and return the empty/not-started baseline.
+    """
+    if child_id is not None:
+        owned = get_child_by_id(user, child_id)
+        if owned is None:
+            raise ChildNotFoundError("No care recipient found for this id")
+        return owned["id"]
+    sole = get_child(user)
+    return sole["id"] if sole is not None else None
 
 
 def create_child(user: AuthedUser, fields: Dict[str, Any]) -> Dict[str, Any]:

@@ -17,9 +17,12 @@ Endpoints:
   PUT  /api/v3/profile     update the caller's profile (partial)
   POST /api/v3/child       create the caller's care recipient
   GET  /api/v3/child       the caller's active care recipient (404 if none)
+  GET  /api/v3/children    the caller's care recipients (the switcher list)
   PUT  /api/v3/child/{id}  update the caller's care recipient (partial)
   POST /api/v3/onboarding  the structured onboarding write (once); marks complete
 """
+
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -116,6 +119,21 @@ def get_child(user: AuthedUser = Depends(get_current_user)) -> ChildProfile:
             detail="No care recipient found",
         )
     return ChildProfile.model_validate(row)
+
+
+@router.get("/children", response_model=List[ChildProfile])
+def list_children(user: AuthedUser = Depends(get_current_user)) -> List[ChildProfile]:
+    """Return the caller's care recipients, newest first (the future switcher list).
+
+    The list the app's recipient switcher reads to pick the active child_id for the
+    per-recipient dashboard / LCI / alerts. RLS-scoped to the caller, so it can only
+    ever return the caller's own recipients. Empty for a fresh user with no recipient
+    yet; today the one-recipient guard means it is a single element, and it is already
+    correct for several recipients once the guard is lifted. Unlike GET /child, an empty
+    list is a 200 (not a 404): "you have no recipients" is a valid switcher state.
+    """
+    rows = profile_service.list_children(user)
+    return [ChildProfile.model_validate(row) for row in rows]
 
 
 @router.put("/child/{child_id}", response_model=ChildProfile)

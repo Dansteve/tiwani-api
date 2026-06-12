@@ -22,46 +22,74 @@ Endpoints:
                                          threshold. 404 if no active alert.
 """
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
 from app.models.alert import AlertView, DismissResult
 from app.models.chapters_v3 import Chapter
 from app.services import alerts as alerts_service
+from app.services import profile as profile_service
 
 router = APIRouter()
+
+_CHILD_ID_QUERY = Query(
+    default=None,
+    description=(
+        "Which care recipient's alerts to act on. Defaults to the caller's sole recipient "
+        "(back-compat while only one is supported); the future app switcher passes the "
+        "active child_id. 404 if the id is not one the caller owns."
+    ),
+)
 
 
 @router.get("/alerts", response_model=List[AlertView])
 def list_alerts(
     user: AuthedUser = Depends(get_current_user),
+    child_id: Optional[str] = _CHILD_ID_QUERY,
 ) -> List[AlertView]:
-    """The caller's active Erosion Alerts with their governed copy (section 4.9).
+    """ONE care recipient's active Erosion Alerts with their governed copy (section 4.9).
 
-    One AlertView per chapter that has an active (non-dismissed) alert, in the stable
-    chapter order. Each carries the verbatim section 4.9 prompt (with the chapter name
-    substituted), the action label, and the chapter's community/statutory signposts.
-    A chapter with no active alert is simply absent.
+    One AlertView per chapter that has an active (non-dismissed) alert FOR THIS recipient,
+    in the stable chapter order. Each carries the verbatim section 4.9 prompt (with the
+    chapter name substituted), the action label, and the chapter's community/statutory
+    signposts. A chapter with no active alert is simply absent. The list is one recipient's
+    alerts, never two pooled. child_id selects the recipient (default the sole one); a
+    child_id the caller does not own is a 404.
     """
-    return alerts_service.list_active_alerts(user)
+    try:
+        return alerts_service.list_active_alerts(user, child_id)
+    except profile_service.ChildNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No care recipient found",
+        ) from exc
 
 
 @router.post("/alerts/{chapter}/dismiss", response_model=DismissResult)
 def dismiss_alert(
     chapter: Chapter,
     user: AuthedUser = Depends(get_current_user),
+    child_id: Optional[str] = _CHILD_ID_QUERY,
 ) -> DismissResult:
-    """Dismiss a chapter's active alert (section 4.9): it returns only on worsening.
+    """Dismiss ONE recipient's chapter alert (section 4.9): it returns only on worsening.
 
-    Marks the chapter's active alert dismissed and records the level it was dismissed
-    at, so the next post-pulse evaluation resurfaces it only if it computes a strictly
-    higher level. 404 if the chapter has no active alert to dismiss. `chapter` is the
-    stable chapter code (an unknown code is a 422 from the path validation).
+    Marks THAT recipient's active alert for the chapter dismissed and records the level it
+    was dismissed at, so the next post-pulse evaluation resurfaces it only if it computes a
+    strictly higher level. Dismissing one recipient's alert never touches another
+    recipient's alert for the same chapter. 404 if this recipient has no active alert to
+    dismiss (or the child_id is not the caller's). `chapter` is the stable chapter code (an
+    unknown code is a 422 from the path validation). child_id selects the recipient (default
+    the sole one).
     """
     try:
-        return alerts_service.dismiss_alert(user, chapter.value)
+        return alerts_service.dismiss_alert(user, chapter.value, child_id)
+    except profile_service.ChildNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No care recipient found",
+        ) from exc
     except alerts_service.AlertNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

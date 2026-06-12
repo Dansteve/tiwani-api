@@ -32,6 +32,14 @@ from tests.fakes_supabase import FakeClient, FakeResponse
 NOW = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
 AUTHED = AuthedUser(id="u-1", email="ada@example.com", access_token="tok-abc")
 
+# The caller's sole care recipient. The READ paths (list/levels/dismiss) resolve it
+# through profile.resolve_child_id (a child_profile read), then scope every alert query to
+# this child_id. The post-pulse evaluation is passed the activity's child_id directly (no
+# resolve), so its tests pass CHILD_ID positionally (Docs/FeatureDecisions.md, multi care
+# recipient: every alert belongs to exactly one recipient).
+CHILD_ID = "ch-1"
+CHILD_ROW = {"id": CHILD_ID, "user_id": "u-1", "name": "Sam"}
+
 
 def _iso(days_ago: float) -> str:
     return (NOW - timedelta(days=days_ago)).isoformat()
@@ -80,7 +88,9 @@ SAMPLE_ALERT = AlertView(
 
 def test_get_alerts_returns_the_alertview_shape(authed, monkeypatch):
     monkeypatch.setattr(
-        alerts_routes.alerts_service, "list_active_alerts", lambda user: [SAMPLE_ALERT]
+        alerts_routes.alerts_service,
+        "list_active_alerts",
+        lambda user, child_id=None: [SAMPLE_ALERT],
     )
     response = authed.get("/api/v3/alerts")
     assert response.status_code == 200
@@ -96,7 +106,7 @@ def test_get_alerts_returns_the_alertview_shape(authed, monkeypatch):
 
 
 def test_dismiss_unknown_chapter_alert_is_404(authed, monkeypatch):
-    def _raise(user, chapter):
+    def _raise(user, chapter, child_id=None):
         raise alerts_service.AlertNotFoundError("none")
 
     monkeypatch.setattr(alerts_routes.alerts_service, "dismiss_alert", _raise)
@@ -132,8 +142,16 @@ def test_list_active_alerts_renders_governed_copy(monkeypatch):
             "dismissed_level": None,
         },
     ]
-    fake = FakeClient({("alert_record", "select"): FakeResponse(rows)})
+    # list_active_alerts resolves the sole recipient first (profile layer), then reads
+    # only that recipient's alerts. Serve the child read from the same fake.
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("alert_record", "select"): FakeResponse(rows),
+        }
+    )
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
 
     alerts = {a.chapter: a for a in alerts_service.list_active_alerts(AUTHED)}
     # School L1 carries the verbatim L1 prompt + CTA; Career L3 carries the L3 ones.
@@ -143,17 +161,35 @@ def test_list_active_alerts_renders_governed_copy(monkeypatch):
     assert alerts["career"].level == 3
     assert "continuity needs attention" in alerts["career"].copy_text
     assert alerts["career"].action_label == "Find support"
+    # The alert read was scoped to the resolved recipient (the isolation rule).
+    assert ("child_id", CHILD_ID) in next(
+        c for c in fake.calls if c["table"] == "alert_record" and c["op"] == "select"
+    )["filters"]
 
 
 def test_active_levels_by_chapter_feeds_the_dashboard(monkeypatch):
+    # The dashboard resolves the recipient once and passes the child_id in; this helper
+    # does not resolve, it reads exactly the given recipient's active alerts.
     rows = [
         {"chapter": "travel", "level": 2, "dismissed": False, "dismissed_level": None},
     ]
     fake = FakeClient({("alert_record", "select"): FakeResponse(rows)})
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
 
-    levels = alerts_service.active_levels_by_chapter(AUTHED)
+    levels = alerts_service.active_levels_by_chapter(AUTHED, CHILD_ID)
     assert levels == {"travel": 2}
+    # Scoped to the passed recipient.
+    assert ("child_id", CHILD_ID) in next(
+        c for c in fake.calls if c["table"] == "alert_record" and c["op"] == "select"
+    )["filters"]
+
+
+def test_active_levels_by_chapter_is_empty_without_a_recipient(monkeypatch):
+    # No resolved recipient (child_id None): the helper reads nothing (no alert query).
+    fake = FakeClient({("alert_record", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
+    assert alerts_service.active_levels_by_chapter(AUTHED, None) == {}
+    assert not any(c["table"] == "alert_record" for c in fake.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -212,17 +248,27 @@ def test_post_pulse_evaluation_inserts_an_l3_alert(monkeypatch):
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
 
-    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", now=NOW)
+    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", CHILD_ID, now=NOW)
     assert level is AlertLevel.L3
 
     inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "alert_record"]
     assert len(inserts) == 1
     payload = inserts[0]["payload"]
     assert payload["user_id"] == "u-1"
+    assert payload["child_id"] == CHILD_ID  # the alert is the recipient's, per migration 0010
     assert payload["chapter"] == "career"
     assert payload["level"] == 3
     assert payload["trigger_condition"] == "l3_counts_14d"
     assert payload["dismissed"] is False
+    # Isolation: every history read and the alert write was scoped to this ONE recipient.
+    for call in fake.calls:
+        if call["table"] in ("activity_record", "pulse_record", "lci_snapshot", "alert_record"):
+            seen = {v for (col, v) in call["filters"] if col == "child_id"}
+            if call["op"] == "insert":
+                payload_child = (call["payload"] or {}).get("child_id")
+                if payload_child:
+                    seen.add(payload_child)
+            assert seen <= {CHILD_ID}, f"a {call['table']} {call['op']} touched another recipient"
 
 
 def test_post_pulse_evaluation_clears_a_resolved_alert(monkeypatch):
@@ -246,21 +292,23 @@ def test_post_pulse_evaluation_clears_a_resolved_alert(monkeypatch):
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
 
-    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", now=NOW)
+    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", CHILD_ID, now=NOW)
     assert level is None
     deletes = [c for c in fake.calls if c["op"] == "delete" and c["table"] == "alert_record"]
     assert len(deletes) == 1
+    # The delete was scoped to this recipient (it cannot clear another recipient's alert).
+    assert ("child_id", CHILD_ID) in deletes[0]["filters"]
 
 
 def test_post_pulse_evaluation_is_non_interrupting_on_failure(monkeypatch):
     # If the alert evaluation raises (e.g. a read blows up), the _safe wrapper must
     # swallow it so the pulse flow is never broken.
-    def _boom(user, chapter, **kwargs):
+    def _boom(user, chapter, child_id, **kwargs):
         raise RuntimeError("supabase down")
 
     monkeypatch.setattr(alerts_service, "evaluate_chapter_alert", _boom)
     # Must not raise.
-    alerts_service.evaluate_chapter_alert_safe(AUTHED, "career", now=NOW)
+    alerts_service.evaluate_chapter_alert_safe(AUTHED, "career", CHILD_ID, now=NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +317,11 @@ def test_post_pulse_evaluation_is_non_interrupting_on_failure(monkeypatch):
 
 
 def test_dismiss_marks_the_row_dismissed_at_its_level(monkeypatch):
+    # dismiss_alert resolves the sole recipient first, then dismisses only that
+    # recipient's alert for the chapter (scoped by child_id, migration 0010).
     fake = FakeClient(
         {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
             ("alert_record", "select"): FakeResponse(
                 [
                     {
@@ -286,17 +337,26 @@ def test_dismiss_marks_the_row_dismissed_at_its_level(monkeypatch):
         }
     )
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
 
     result = alerts_service.dismiss_alert(AUTHED, "career")
     assert result.chapter == "career"
     assert result.dismissed_level == 1
     update = [c for c in fake.calls if c["op"] == "update" and c["table"] == "alert_record"][0]
     assert update["payload"] == {"dismissed": True, "dismissed_level": 1}
+    # The dismiss update was scoped to this recipient (never another recipient's alert).
+    assert ("child_id", CHILD_ID) in update["filters"]
 
 
 def test_dismiss_with_no_active_alert_raises(monkeypatch):
-    fake = FakeClient({("alert_record", "select"): FakeResponse([])})
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("alert_record", "select"): FakeResponse([]),
+        }
+    )
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
     with pytest.raises(alerts_service.AlertNotFoundError):
         alerts_service.dismiss_alert(AUTHED, "career")
 
@@ -334,12 +394,13 @@ def test_dismissed_alert_does_not_return_at_the_same_level(monkeypatch):
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
 
-    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", now=NOW)
+    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", CHILD_ID, now=NOW)
     assert level is AlertLevel.L1  # the engine still computes L1
     update = [c for c in fake.calls if c["op"] == "update" and c["table"] == "alert_record"][0]
     # The latent level is tracked, but dismissed is NOT cleared (it stays hidden).
     assert update["payload"]["level"] == 1
     assert "dismissed" not in update["payload"]
+    assert ("child_id", CHILD_ID) in update["filters"]
 
 
 def test_dismissed_alert_returns_when_it_worsens_past_the_next_threshold(monkeypatch):
@@ -373,10 +434,11 @@ def test_dismissed_alert_returns_when_it_worsens_past_the_next_threshold(monkeyp
     monkeypatch.setattr("app.services.alerts.get_anon_client", lambda token=None: fake)
     monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
 
-    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", now=NOW)
+    level = alerts_service.evaluate_chapter_alert(AUTHED, "career", CHILD_ID, now=NOW)
     assert level is AlertLevel.L3
     update = [c for c in fake.calls if c["op"] == "update" and c["table"] == "alert_record"][0]
     # Re-activated at the higher level: dismissed cleared, level bumped to 3.
     assert update["payload"]["level"] == 3
     assert update["payload"]["dismissed"] is False
     assert update["payload"]["dismissed_level"] is None
+    assert ("child_id", CHILD_ID) in update["filters"]
