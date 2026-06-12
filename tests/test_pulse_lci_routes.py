@@ -268,6 +268,105 @@ def test_record_pulse_reads_stored_tier_and_writes_pulse_and_snapshot(monkeypatc
             assert seen <= {CHILD_ID}, f"a {call['table']} {call['op']} touched another recipient"
 
 
+def test_record_pulse_updates_strategy_library_outcome_counts(monkeypatch):
+    # End to end (Task 9): completing a Pulse applies the outcome EQUALLY to the plan's saved
+    # strategies for the activity's OWN recipient + scenario (read from the stored
+    # activity_record). A "well" outcome increments positive_count on the saved strategy.
+    activity_row = {
+        "id": "act-1",
+        "chapter": "travel",
+        "tier": "Modified",
+        "child_id": CHILD_ID,
+        "activity_code": "airport-departure-standard",
+        "strategies": [{"title": "Lanyard", "detail": "Request the lanyard"}],
+    }
+    fake = _fake_for_pulse_write()
+    fake.scripts[("activity_record", "select")] = FakeResponse([activity_row])
+    monkeypatch.setattr("app.services.pulse.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.lci.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr(
+        "app.services.alerts.get_anon_client", lambda token=None: _alerts_fake_quiet()
+    )
+
+    # A stateful library store holding the saved strategy, so the count update is observable.
+    library_rows = [
+        {
+            "id": "lib-1",
+            "user_id": "u-1",
+            "child_id": CHILD_ID,
+            "chapter": "travel",
+            "scenario_type": "airport-departure-standard",
+            "title": "Lanyard",
+            "description": "Request the lanyard",
+            "dimension_tags": ["sensory"],
+            "positive_count": 0,
+            "negative_count": 0,
+            "removal_count": 0,
+            "promoted": False,
+            "suppressed": False,
+            "cross_context_dismissed_chapters": [],
+        }
+    ]
+    monkeypatch.setattr(
+        "app.services.strategies.get_anon_client",
+        lambda token=None: _LibraryFake(library_rows),
+    )
+
+    pulse_service.record_pulse(AUTHED, activity_id="act-1", outcome_code="well", now=NOW)
+
+    # The saved strategy gained a positive outcome (equal attribution, scoped to this recipient).
+    assert library_rows[0]["positive_count"] == 1
+    assert library_rows[0]["negative_count"] == 0
+
+
+class _LibraryFake:
+    """A tiny stateful fake for the strategy_library_item table (select + update).
+
+    Filters the backing rows by the recorded eq predicates and applies updates in place, so a
+    pulse-driven count increment is observable in the backing list. Only the operations the
+    outcome update uses are implemented.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.calls = []
+
+    def table(self, name):
+        return _LibraryFake._Q(self._rows, self.calls)
+
+    class _Q:
+        def __init__(self, rows, calls):
+            self._rows = rows
+            self._calls = calls
+            self._op = "select"
+            self._fields = None
+            self._filters = []
+
+        def select(self, *a, **k):
+            self._op = "select"
+            return self
+
+        def update(self, fields, *a, **k):
+            self._op = "update"
+            self._fields = fields
+            return self
+
+        def eq(self, col, val):
+            self._filters.append((col, val))
+            return self
+
+        def limit(self, *a, **k):
+            return self
+
+        def execute(self):
+            self._calls.append({"op": self._op, "filters": list(self._filters)})
+            matched = [r for r in self._rows if all(r.get(c) == v for c, v in self._filters)]
+            if self._op == "update":
+                for r in matched:
+                    r.update(self._fields or {})
+            return FakeResponse([dict(r) for r in matched])
+
+
 def test_record_pulse_unknown_activity_raises(monkeypatch):
     fake = FakeClient({("activity_record", "select"): FakeResponse([])})
     monkeypatch.setattr("app.services.pulse.get_anon_client", lambda token=None: fake)

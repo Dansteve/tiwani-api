@@ -27,6 +27,7 @@ from app.db import get_anon_client
 from app.models.pulse import PendingPulse, PulseRecord
 from app.services import alerts as alerts_service
 from app.services import lci as lci_service
+from app.services import strategies as strategy_library
 from app.services.profile import _first, _rows
 
 ACTIVITY_RECORD_TABLE = "activity_record"
@@ -88,6 +89,8 @@ def record_pulse(
     chapter = activity.get("chapter")
     tier_recommended = activity.get("tier")
     child_id = activity.get("child_id")
+    scenario_type = activity.get("activity_code")
+    plan_strategies = activity.get("strategies") or []
 
     stored = _insert_pulse(
         user,
@@ -108,9 +111,23 @@ def record_pulse(
     # Section 4.9 (Task 7): evaluate Erosion Alerts for THIS recipient's chapter AFTER the
     # LCI is current (the alert reads the new score + snapshot history). Non-interrupting:
     # the _safe wrapper logs and swallows any failure so the recorded pulse is never lost
-    # to an alerting problem (the alert is a background signal, KB 1.6). The Task 9
-    # strategy outcome counts slot in after this.
+    # to an alerting problem (the alert is a background signal, KB 1.6).
     alerts_service.evaluate_chapter_alert_safe(user, chapter, child_id, now=base_now)
+
+    # Section 4.10 (Task 9): apply the Pulse outcome EQUALLY to every saved strategy that was
+    # in this plan, for the activity's OWN recipient + chapter + scenario (read from the stored
+    # row, never re-derived). Well/Okay increments positives, Difficult negatives, a skipped
+    # pulse moves neither. Non-interrupting (the _safe wrapper logs and swallows any failure,
+    # incl. the 0014 table not applied yet) so the learning update never fails the recorded
+    # pulse. Per-recipient by construction: a pulse for child A never touches child B's counts.
+    strategy_library.apply_pulse_outcome_safe(
+        user,
+        child_id=child_id,
+        chapter=chapter,
+        scenario_type=scenario_type,
+        plan_strategies=plan_strategies,
+        outcome_code=outcome_code,
+    )
 
     return _to_pulse_record(stored, chapter=chapter, tier_recommended=tier_recommended)
 
@@ -164,17 +181,18 @@ def list_pending_pulses(user: AuthedUser, *, now: Optional[datetime] = None) -> 
 
 
 def _get_owned_activity(user: AuthedUser, activity_id: str) -> Optional[Dict[str, Any]]:
-    """The caller's activity_record by id (chapter + tier + child_id), or None if not theirs.
+    """The caller's activity_record by id (chapter + tier + child_id + scenario), or None.
 
     RLS scopes the read to the caller, so a forged id for another user matches
-    nothing. Selects the stored chapter and tier the Pulse copies (never re-derived) and
-    the child_id, so the pulse, the LCI recompute, and the alert evaluation are all scoped
-    to the activity's OWN recipient.
+    nothing. Selects the stored chapter and tier the Pulse copies (never re-derived), the
+    child_id, and the activity_code + strategies the Strategy Library outcome update needs
+    (Task 9): the equal-attribution update applies the outcome to the plan's saved strategies
+    for the activity's OWN recipient + chapter + scenario, all read from the stored row.
     """
     client = get_anon_client(user.access_token)
     return _first(
         client.table(ACTIVITY_RECORD_TABLE)
-        .select("id, chapter, tier, child_id")
+        .select("id, chapter, tier, child_id, activity_code, strategies")
         .eq("id", activity_id)
         .eq("user_id", user.id)
         .execute()

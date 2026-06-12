@@ -275,6 +275,63 @@ def _fake_client_for_plan_write():
     )
 
 
+def test_prepare_plan_ranks_a_promoted_library_strategy_first(monkeypatch):
+    # End to end (Task 9): a promoted library item for THIS recipient + scenario floats its
+    # strategy to the front of the returned plan, WITHOUT changing any score / total / tier.
+    # The promoted title is the airport-standard rank-3 strategy ("Security fast-tracks if
+    # available"); the engine's starter order puts rank 1 first, so promotion is observable.
+    promoted_item = {
+        "id": "lib-sec",
+        "user_id": "u-1",
+        "child_id": "c-1",
+        "chapter": "travel",
+        "scenario_type": "airport-departure-standard",
+        "title": "Security fast-tracks if available",
+        "description": "Use security fast-track",
+        "dimension_tags": ["sensory"],
+        "positive_count": 2,
+        "negative_count": 0,
+        "promoted": True,
+        "suppressed": False,
+        "removal_count": 0,
+        "cross_context_dismissed_chapters": [],
+    }
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("activity_record", "insert"): FakeResponse([{"id": "act-123"}]),
+            # The library scenario read returns the promoted item; the cross-context all-items
+            # read returns the same one (it is in this chapter, so it is not a cross-context
+            # match); auto-save sees it as existing and inserts nothing.
+            ("strategy_library_item", "select"): FakeResponse([promoted_item]),
+            ("strategy_library_item", "insert"): FakeResponse([{"id": "ignored"}]),
+        }
+    )
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.strategies.get_anon_client", lambda token=None: fake)
+
+    plan = plans_service.prepare_plan(
+        AUTHED,
+        chapter="travel",
+        activity_code="airport-departure-standard",
+        today_flags=[],
+        activity_date=None,
+        now=NOW,
+    )
+
+    # The promoted strategy is now FIRST (it was rank 3 in the seed order).
+    assert plan.strategies[0].title == "Security fast-tracks if available"
+    assert plan.strategies[0].library_item_id == "lib-sec"
+    # Every starter strategy carries its library_item_id so the app can remove it.
+    assert plan.strategies[0].library_item_id is not None
+    # The numbers are untouched by the library (SL-MED airport-standard, no flags): the library
+    # only reordered the strategy list.
+    assert plan.scores.temporal == 5 and plan.scores.sensory == 5
+    assert plan.scores.logistical == 5 and plan.scores.human == 4
+    assert plan.total == 19
+
+
 def test_prepare_plan_runs_engine_and_writes_record(monkeypatch):
     fake = _fake_client_for_plan_write()
     # Both the profile service (get_child) and the plans service insert go through

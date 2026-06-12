@@ -2,7 +2,9 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3
+from app.routes import (
+    profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3, strategies,
+)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -56,6 +58,12 @@ app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
 # OTHER v3 route rejects a closed account with 410 (the soft-delete block in
 # get_current_user). Registered under /api/v3 behind the current-user dependency.
 app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (export & delete)"])
+# The Strategy Library (section 4.10, Task 9): the learning-layer mutations the Coordinator
+# drives on a saved strategy: suppress (remove; suppressed after 3 for the scenario), re-allow
+# a suppressed one, and dismiss a cross-context "Also worked in [chapter]" surfacing per chapter.
+# Auto-save + promotion + the outcome counts happen in the plan/pulse flows; these routes are the
+# explicit actions. Registered under /api/v3 behind current-user (normal, not allow-deleted).
+app.include_router(strategies.router, prefix="/api/v3", tags=["v3 Strategy Library"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.
