@@ -21,6 +21,14 @@ The routes, by trust:
                                          caller's card (sets revoked_at; the audit row is
                                          kept). 404 if the card is not the caller's. After
                                          it returns, the public token read 404s.
+  GET    /api/v3/cards/{card_id}/content AUTH REQUIRED, owner only. The Card History "View":
+                                         the owner re-opens their card by id and gets the
+                                         SAME safe content a helper sees. 404 if not theirs.
+  GET    /api/v3/cards/{card_id}/pdf     AUTH REQUIRED, owner only. The printable export: a
+                                         PDF of the SAME governed content as the View (same
+                                         read-by-id scoping). 404 if not theirs. A PAID
+                                         convenience (the gate wraps this at integration);
+                                         the free web card stays browser-printable.
   GET    /api/v3/cards/{token}           NO AUTH. The helper opens the share link. Returns
                                          ONLY the safe content if the token is valid, not
                                          expired, AND not revoked, else 404. Never returns
@@ -37,9 +45,10 @@ specific paths first regardless, so the token read never shadows them.
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.auth import AuthedUser, get_current_user
+from app.engines.cards import render_card_pdf
 from app.models.card import (
     CardContent,
     CardCreated,
@@ -129,6 +138,51 @@ def read_owned_card(
             detail="Card not found",
         )
     return content
+
+
+@router.get(
+    "/cards/{card_id}/pdf",
+    responses={200: {"content": {"application/pdf": {}}}},
+    response_class=Response,
+)
+def read_owned_card_pdf(
+    card_id: str,
+    user: AuthedUser = Depends(get_current_user),
+) -> Response:
+    """Download one of the caller's OWN cards as a PDF, by id (AUTH, owner; the export).
+
+    The printable Continuity Card: a PDF rendering of the SAME governed content the web
+    card shows. It reuses the owner re-open-by-id path (cards_service.read_card_content_by_id):
+    RLS-scoped to the caller (select by id AND user_id under the caller's token), so a card
+    the caller does not own is unreachable and is a 404 (the row is invisible; we do not
+    confirm it exists), exactly like the View endpoint. The resolved CardContent (first
+    name only, the supportive intro, the top strategies, the health-and-safety line, the
+    if-difficult line, and the freshness note) is laid out by the PURE renderer
+    (app/engines/cards.render_card_pdf), which re-runs the SHARED non-clinical guard at
+    render time so a prohibited word can never reach the page. The response is an
+    application/pdf attachment so the browser downloads it. 401 without a valid token.
+
+    PAID CONVENIENCE (Docs/FeatureDecisions.md): the PDF export is gated on the
+    `card.pdf_export` entitlement, acceptable only because the free public web card is
+    browser-printable. The gate is NOT wired here yet (it lives on
+    feat/api-subscription-foundation, not merged). At integration, wrap exactly this
+    handler body with `require_entitlement(user, "card.pdf_export")` as the first line,
+    BEFORE the read below: an entitled caller proceeds, an unentitled one is refused
+    (402/403) before any card is read or rendered.
+    """
+    content = cards_service.read_card_content_by_id(user, card_id)
+    if content is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Card not found",
+        )
+    pdf_bytes = render_card_pdf(content)
+    filename = f"continuity-card-{card_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/cards/{token}", response_model=CardContent)

@@ -13,9 +13,12 @@ This package is the PURE assembler (app/engines/cards/builder.py): given a store
 activity_record + the care recipient's name it shapes the SAFE CardContent, using the
 FIRST name only, and runs every helper-facing string through the SHARED non-clinical
 guard (app/engines/alerts/guard.py: one prohibited-words definition, reused, not a
-second guard). The data layer (verify ownership, generate the token, store the
-card_record, read by token) is app/services/cards.py; the routes are
-app/routes/cards.py; the table + the careful token read path are migration
+second guard). It also holds the PURE PDF renderer (app/engines/cards/pdf.py): given an
+already-assembled CardContent it lays out the SAME governed content as one-page PDF
+bytes (the paid convenience export), re-running the shared guard at render time as a
+backstop and re-shaping nothing. The data layer (verify ownership, generate the token,
+store the card_record, read by token, re-open by id) is app/services/cards.py; the
+routes are app/routes/cards.py; the table + the careful token read path are migration
 0007_card_record.sql.
 
 SAFETY (HardRules/Api/Modules/Cards.md): the share link carries ZERO PII beyond the
@@ -30,10 +33,12 @@ from app.engines.cards.builder import (
     build_freshness_note,
     first_name_only,
 )
+from app.engines.cards.pdf import render_card_pdf
 
 __all__ = [
     "build_card_content",
     "build_freshness_note",
     "first_name_only",
+    "render_card_pdf",
     "MAX_CARD_STRATEGIES",
 ]
