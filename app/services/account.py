@@ -26,11 +26,14 @@ rest of the api until they reactivate.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
+
+logger = logging.getLogger(__name__)
 
 USER_PROFILE_TABLE = "user_profile"
 
@@ -120,17 +123,44 @@ def _read_deleted_at(user: AuthedUser) -> Any:
 
     The single source the closure state reads from: eq id == user.id under the caller's token,
     so it can only ever see the caller's flag. Returns the raw column value (an ISO string when
-    set, None when active or when there is no profile row / no column yet). is_account_deleted
-    and account_status both build on this so the read lives in one place.
+    set) or None when the account is active, when there is no profile row yet, or when the read
+    itself fails.
+
+    Fail-open by design. The select is wrapped so that ANY failure to read deleted_at returns
+    None, i.e. the account is treated as ACTIVE (not deleted). The two failure shapes this
+    tolerates are a missing column (the deleted_at column not yet added by migration 0013 on a
+    database where it has not been applied: PostgREST hard-errors on a select of a non-existent
+    column, it does NOT quietly omit the key) and a transient read error (a Supabase blip).
+    Either way the caught exception is logged at WARNING so the failure is observable, not
+    silently swallowed, and None is returned.
+
+    Rationale: soft-delete is a NON-security policy, not an access boundary. The data is
+    RETAINED on closure and RLS still scopes every read to the caller, so reading deleted_at is
+    only deciding whether to show the "account closed" block, never whether the caller may see
+    another user's data. On a read failure, availability wins: a soft-delete read must NEVER be
+    able to 500 the entire authenticated api (this read runs in get_current_user on EVERY data
+    request, so an error here would otherwise take down every authenticated endpoint). The worst
+    case of failing open is that a just-closed account briefly stays usable until the read
+    recovers, which is strictly safer than locking every user out.
+
+    is_account_deleted and account_status both build on this so the read (and its fail-open
+    policy) lives in one place.
     """
     client = get_anon_client(user.access_token)
-    row = _first(
-        client.table(USER_PROFILE_TABLE)
-        .select("deleted_at")
-        .eq("id", user.id)
-        .maybe_single()
-        .execute()
-    )
+    try:
+        row = _first(
+            client.table(USER_PROFILE_TABLE)
+            .select("deleted_at")
+            .eq("id", user.id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:  # noqa: BLE001 - a soft-delete read must never 500 the whole api; fail open.
+        logger.warning(
+            "Could not read user_profile.deleted_at; treating account as active (fail-open)",
+            exc_info=True,
+        )
+        return None
     if row is None:
         return None
     return row.get("deleted_at")
@@ -143,8 +173,9 @@ def is_account_deleted(user: AuthedUser) -> bool:
     own user_profile row under RLS (eq id == user.id, the anon client carrying the caller's
     token), so it can never see another user's flag. A user with no profile row yet (a fresh
     sign-up before get_or_create_profile runs) is treated as active (returns False): there is
-    nothing closed yet. The column is migration 0013; on a database where it has not been
-    applied the row simply has no deleted_at key, which reads as active.
+    nothing closed yet. The column is migration 0013; if the read fails (the column not yet
+    applied, or a transient error) _read_deleted_at fails open and returns None, so this reads
+    as active rather than 500-ing the request (see _read_deleted_at for the rationale).
 
     Note this is purely "is the flag set", independent of the 90-day recovery window: a
     soft-deleted account stays blocked on normal routes (410) for the whole window, until it

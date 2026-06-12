@@ -1,5 +1,6 @@
 -- Migration 0013: user_profile soft-delete column (account closure, 90-day recovery window).
 --
+-- !!! APPLIED TO PRODUCTION 2026-06-12 (additive nullable column; no backfill needed) !!!
 -- Adds `deleted_at timestamptz null` to public.user_profile so a Coordinator can CLOSE
 -- their account (POST /api/v3/me/delete) without the data being hard-deleted. Per the
 -- retention policy the data is RETAINED for 90 DAYS, during which the Coordinator can
@@ -19,10 +20,11 @@
 -- the column to the owner (auth.uid() = id), so the caller reads, sets, and clears their OWN
 -- deleted_at under RLS, never anyone else's.
 --
--- PENDING OWNER APPLY: this migration is written but NOT applied to production by this
--- change. The orchestrator/owner applies it (the same posture as migration 0012's deferred
--- follow-ups). Until it is applied, the /me/delete write, the reactivation, and the
--- soft-delete access block have no column to act on.
+-- APPLIED TO PRODUCTION 2026-06-12: this migration has been applied to the production
+-- database (the same orchestrated go-live as 0009/0010/0011). The /me/delete write, the
+-- reactivation, and the soft-delete access block now have the column to act on. Because the
+-- column was absent until this was applied, _read_deleted_at (app/services/account.py) fails
+-- open on a read error so the soft-delete read can never 500 the authenticated api.
 
 -- =====================================================================
 -- user_profile.deleted_at

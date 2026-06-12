@@ -2,11 +2,12 @@
 
 The service's only I/O is the RLS-scoped Supabase anon client, monkeypatched to the
 FakeClient in tests/fakes_supabase (same seam as test_profile_service), so the suite never
-reaches a live Supabase. These pin: the soft-delete state read (is_account_deleted), the
-export gathering the caller's own rows scoped by user_id across every user-owned table, the
-soft-delete write setting user_profile.deleted_at on the caller's own row AND revoking the
-caller's active cards, the account-status read (the computed 90-day recovery window), and the
-reactivation write (clearing deleted_at inside the window, refusing past it).
+reaches a live Supabase. These pin: the soft-delete state read (is_account_deleted, including
+its fail-open behaviour when the deleted_at read itself errors), the export gathering the
+caller's own rows scoped by user_id across every user-owned table, the soft-delete write
+setting user_profile.deleted_at on the caller's own row AND revoking the caller's active
+cards, the account-status read (the computed 90-day recovery window), and the reactivation
+write (clearing deleted_at inside the window, refusing past it).
 """
 
 from datetime import datetime, timedelta, timezone
@@ -15,9 +16,39 @@ import pytest
 
 import app.services.account as svc
 from app.auth import AuthedUser
-from tests.fakes_supabase import FakeClient, FakeResponse
+from tests.fakes_supabase import FakeClient, FakeQuery, FakeResponse
 
 USER = AuthedUser(id="u-1", email="ada@example.com", access_token="tok-abc")
+
+
+class _RaisingQuery(FakeQuery):
+    """A FakeQuery whose execute() RAISES, simulating a failed deleted_at read.
+
+    Reuses the recording fluent builder (select/eq/maybe_single all record as usual) but
+    blows up at the terminal, the way PostgREST hard-errors on a select of a column that does
+    not exist (the deleted_at column before migration 0013 was applied) or on a transient
+    Supabase error. The call is still logged before raising so a test could assert it was
+    attempted.
+    """
+
+    def execute(self) -> FakeResponse:
+        self._log.append(
+            {
+                "table": self._table,
+                "op": self._op,
+                "payload": self._payload,
+                "filters": list(self._filters),
+                "single": self._single,
+            }
+        )
+        raise RuntimeError("column user_profile.deleted_at does not exist")
+
+
+class _RaisingClient(FakeClient):
+    """A FakeClient whose table() reads RAISE, to exercise _read_deleted_at's fail-open path."""
+
+    def table(self, name: str) -> FakeQuery:
+        return _RaisingQuery(name, self.calls, self.scripts)
 
 
 def _iso(dt: datetime) -> str:
@@ -69,6 +100,25 @@ def test_is_account_deleted_false_when_no_profile_row(monkeypatch):
     anon = FakeClient({("user_profile", "select"): FakeResponse(None)})
     _patch_anon(monkeypatch, anon)
     assert svc.is_account_deleted(USER) is False
+
+
+def test_is_account_deleted_fails_open_to_active_when_read_raises(monkeypatch, caplog):
+    # Fail-open: if reading deleted_at ERRORS (e.g. the column is missing because migration
+    # 0013 has not been applied, or a transient Supabase error), the account is treated as
+    # ACTIVE rather than 500-ing the request. A soft-delete read runs in get_current_user on
+    # EVERY data request, so an error here must never take down the authenticated api.
+    anon = _RaisingClient({})  # no scripts needed: execute() raises before consulting them
+    _patch_anon(monkeypatch, anon)
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        assert svc.is_account_deleted(USER) is False
+
+    # The swallowed failure is observable, logged at WARNING (not silently dropped).
+    assert any(rec.levelno == logging.WARNING for rec in caplog.records)
+    # The read was still attempted under the caller's token (it did not short-circuit).
+    assert anon.calls, "expected the deleted_at read to be attempted before failing open"
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +285,23 @@ def test_account_status_active_account_reports_not_deleted(monkeypatch):
     # Read under the caller's token, scoped to the caller's own row.
     assert captured["anon_token"] == "tok-abc"
     assert ("id", "u-1") in anon.calls[0]["filters"]
+
+
+def test_account_status_fails_open_to_not_deleted_when_read_raises(monkeypatch):
+    # Same fail-open as is_account_deleted: GET /me/account-status must not 500 when the
+    # deleted_at read errors. It reports the account as active (not deleted, not reactivatable)
+    # rather than propagating the error.
+    anon = _RaisingClient({})
+    _patch_anon(monkeypatch, anon)
+
+    status = svc.account_status(USER)
+
+    assert status == {
+        "deleted": False,
+        "deleted_at": None,
+        "hard_delete_due_at": None,
+        "reactivatable": False,
+    }
 
 
 def test_account_status_within_window_is_reactivatable_and_computes_due_at(monkeypatch):
