@@ -51,7 +51,9 @@ alter table public.alert_record
 update public.alert_record a
 set child_id = sole.id
 from (
-    select user_id, min(id) as id
+    -- (array_agg(id))[1], not min(id): Postgres has no min(uuid); the having count(*) = 1
+    -- guard means the array holds exactly one element, so [1] is that sole child's id.
+    select user_id, (array_agg(id))[1] as id
     from public.child_profile
     group by user_id
     having count(*) = 1
