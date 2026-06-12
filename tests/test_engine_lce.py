@@ -309,9 +309,14 @@ def test_strategies_are_returned_in_seed_order_for_a_seeded_scenario():
         today_flags=[],
     )
     assert len(result.strategies) >= 1
-    # The first seeded airport-standard strategy is carried verbatim.
-    assert result.strategies[0].body == (
+    # The first seeded airport-standard strategy TITLE is carried verbatim; its body is the
+    # meaningful non-clinical detail (strategy_bodies_v1), distinct from the title.
+    assert result.strategies[0].title == (
         "Request hidden disability lanyard or airport assistance"
+    )
+    assert (
+        result.strategies[0].body
+        and result.strategies[0].body != result.strategies[0].title
     )
     # No starter strategy carries a cross-context label (that is Task 9).
     assert all(s.cross_context_chapter is None for s in result.strategies)

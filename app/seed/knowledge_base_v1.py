@@ -51,6 +51,7 @@ from __future__ import annotations
 from typing import List
 
 from app.models.seed import BaseScores, ScenarioRow, ScenarioStrategy, Tier
+from app.seed.strategy_bodies_v1 import STRATEGY_BODIES
 
 # The version label travels with the data (SeedData.md: the seed is versioned).
 KNOWLEDGE_BASE_VERSION = "knowledge_base_v1"
@@ -65,14 +66,14 @@ KNOWLEDGE_BASE_PROVENANCE = (
 def _strats(*items: str) -> List[ScenarioStrategy]:
     """Build the ranked strategy list from the verbatim strategy phrases.
 
-    The source lists each strategy as a single bullet phrase (no separate title/body),
-    so each phrase is carried verbatim as both the title and the body of one ranked
-    ScenarioStrategy, in source order (rank 1 first). The engine ranks by `rank` and
-    renders the phrase; keeping title == body avoids inventing a label the source does
-    not have.
+    The source lists each strategy as a single bullet phrase, carried verbatim as the
+    strategy `title` (rank 1 first, source order; the engine ranks by `rank`). The `body`
+    is the meaningful expandable detail from strategy_bodies_v1.STRATEGY_BODIES, looked up
+    by the phrase and falling back to the phrase itself when a body is not written, so
+    coverage degrades gracefully. Every body passes the loader's non-clinical guard.
     """
     return [
-        ScenarioStrategy(rank=i + 1, title=text, body=text)
+        ScenarioStrategy(rank=i + 1, title=text, body=STRATEGY_BODIES.get(text, text))
         for i, text in enumerate(items)
     ]
 

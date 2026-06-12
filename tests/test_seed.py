@@ -237,11 +237,13 @@ def test_strategies_ranked_from_one(tables: SeedTables):
 
 
 def test_a_strategy_is_carried_verbatim(tables: SeedTables):
-    # The first airport-standard strategy is transcribed verbatim from the source.
+    # The strategy TITLE is transcribed verbatim from the source; the body is the
+    # meaningful non-clinical detail (strategy_bodies_v1), so it is distinct from the title.
     strategies = tables.get_strategies("travel", "airport-departure-standard")
-    assert strategies[0].body == (
+    assert strategies[0].title == (
         "Request hidden disability lanyard or airport assistance"
     )
+    assert strategies[0].body and strategies[0].body != strategies[0].title
 
 
 # ---------------------------------------------------------------------------
