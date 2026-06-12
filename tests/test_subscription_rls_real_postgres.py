@@ -1,7 +1,7 @@
 """Real-Postgres RLS test for the subscription tables (Subscription precondition 5).
 
 The fake-client tests prove the SERVICE behaviour; they cannot catch an over-permissive RLS
-policy, because they do not run Postgres. This test runs the ACTUAL migration 0014 policies
+policy, because they do not run Postgres. This test runs the ACTUAL migration 0018 policies
 against a REAL Postgres and asserts the three properties the board named:
 
   1. an authenticated user CANNOT UPDATE its own subscription (the self-grant fix at the DB
@@ -23,7 +23,7 @@ it, point TIWANI_TEST_DATABASE_URL at a throwaway local/branch Postgres.
 
 Because a bare Postgres has none of Supabase's auth shim, the test bootstraps a MINIMAL one
 (the `authenticated`/`anon`/`service_role` roles, an `auth` schema with `auth.users` +
-`auth.uid()` reading request.jwt.claims->>'sub'), exactly the surface migration 0014's policies
+`auth.uid()` reading request.jwt.claims->>'sub'), exactly the surface migration 0018's policies
 reference, then applies the migration verbatim and switches request.jwt.claims to impersonate
 each user, which is how Supabase RLS resolves auth.uid() under PostgREST.
 """
@@ -41,7 +41,7 @@ import pytest
 # The migration under test, read verbatim (not a paraphrase): the real policies are exercised.
 _MIGRATION_PATH = (
     pathlib.Path(__file__).resolve().parent.parent
-    / "supabase" / "migrations" / "0014_subscription_entitlement.sql"
+    / "supabase" / "migrations" / "0018_subscription_entitlement.sql"
 )
 
 # Production guard: refuse to run against the known prod host or db name, whatever the env says.
@@ -77,7 +77,7 @@ def _assert_not_production(url: str) -> None:
             )
 
 
-# The minimal Supabase auth shim migration 0014's policies depend on. Created on the test DB
+# The minimal Supabase auth shim migration 0018's policies depend on. Created on the test DB
 # before the migration is applied, so auth.uid() / auth.users / the roles all resolve.
 _BOOTSTRAP_SQL = """
 do $$
@@ -109,7 +109,7 @@ as $$
     )::uuid;
 $$;
 
--- The set_updated_at() trigger fn migration 0001 normally provides (0014 reuses it).
+-- The set_updated_at() trigger fn migration 0001 normally provides (0018 reuses it).
 create or replace function public.set_updated_at() returns trigger
 language plpgsql
 as $fn$
@@ -174,7 +174,7 @@ async def _run() -> None:
             "insert into auth.users (id) values ($1), ($2) on conflict do nothing",
             uuid.UUID(user_a), uuid.UUID(user_b),
         )
-        await conn.execute(migration_sql)  # the actual 0014 tables, policies, RPC, seed
+        await conn.execute(migration_sql)  # the actual 0018 tables, policies, RPC, seed
         await conn.execute(_GRANTS_SQL)
 
         # Seed one subscription per user as the privileged owner (RLS bypassed here on purpose,

@@ -3,7 +3,7 @@
 The cross-repo contract for the subscription surface (Docs/FeatureDecisions.md, the
 Subscription DEFER entry; HardRules/Api/Modules/Subscription.md). These are pydantic
 v2 schemas only: the tables, RLS, and the SECURITY DEFINER write path live in
-migration 0014, the single source of schema truth. The authoritative gate is always
+migration 0018, the single source of schema truth. The authoritative gate is always
 the server-side require_entitlement (app/services/entitlements.py); the app reads
 these to SHOW the plan/price list and the caller's current tier, never to decide
 access on its own.

@@ -27,7 +27,7 @@ The model, exactly per the board:
     data positively grants it.
 
 How tier is resolved: subscription.tier_key is authoritative (the billing webhook
-writes it through the SECURITY DEFINER RPC, migration 0014). If there is no
+writes it through the SECURITY DEFINER RPC, migration 0018). If there is no
 subscription row yet (a user who has never paid), we fall back to
 user_profile.subscription_tier, and finally to 'free'. Every read is RLS-scoped to
 the caller (the subscription SELECT policy and the user_profile SELECT policy both
@@ -65,7 +65,7 @@ UNLIMITED = "unlimited"
 
 # The PAID features the gate enforces: the ALLOWLIST. A feature is gated ONLY if its key
 # is here. Each key has a per-tier value in public.feature_entitlement (seeded by migration
-# 0014 with the board split). Keys are enumerable and falsifiable, never vague "advanced":
+# 0018 with the board split). Keys are enumerable and falsifiable, never vague "advanced":
 #   recipients.max   how many care recipients a tier may have (2 / 3 / unlimited).
 #   card.pdf_export  whether the tier can export a Continuity Card as a PDF (bool).
 #   themes           whether the tier unlocks cosmetic themes (bool).

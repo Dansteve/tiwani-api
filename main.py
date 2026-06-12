@@ -60,7 +60,7 @@ app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (expor
 # list and the caller's own subscription (auth, RLS-scoped reads), a STUBBED checkout, and the
 # Stripe webhook. The webhook is the ONLY writer of subscription state and authenticates by
 # STRIPE SIGNATURE (not a Supabase session), writing through the SECURITY DEFINER RPC
-# (migration 0014, PENDING OWNER APPLY) idempotently on the Stripe event id. The live Stripe
+# (migration 0018, PENDING OWNER APPLY) idempotently on the Stripe event id. The live Stripe
 # SDK calls are STUBBED (PENDING OWNER STRIPE KEYS); the entitlement gate
 # (app/services/entitlements.py) is the one server-side allowlist gate for paid features.
 app.include_router(billing.router, prefix="/api/v3", tags=["v3 Subscription & Billing"])

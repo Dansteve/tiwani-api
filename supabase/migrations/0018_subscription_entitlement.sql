@@ -1,4 +1,4 @@
--- Migration 0014: the subscription + entitlement foundation (DB-driven gating).
+-- Migration 0018: the subscription + entitlement foundation (DB-driven gating).
 --
 -- Backs the Subscription feature (Docs/FeatureDecisions.md, the Subscription DEFER
 -- entry: the 6 hard preconditions + the mandatory refinements; HardRules/Api/Modules/

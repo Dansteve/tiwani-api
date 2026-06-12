@@ -13,7 +13,7 @@ very different trust:
 
   - APPLY A BILLING EVENT (NO Supabase session, webhook only): apply_event(event). The
     ONLY writer of subscription state. It runs the SECURITY DEFINER RPC
-    public.apply_subscription_event (migration 0014) through the SERVICE-ROLE client, so
+    public.apply_subscription_event (migration 0018) through the SERVICE-ROLE client, so
     it writes past RLS exactly as the billing webhook needs and as a user cannot. The RPC
     is idempotent on the Stripe event id (the billing_event ledger), so a replayed webhook
     is a safe no-op; apply_event returns whether the event was newly applied. The webhook

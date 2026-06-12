@@ -17,7 +17,7 @@ shape, no longer carries it). A user can therefore not PUT /api/v3/profile
 {"subscription_tier": "premium"} to self-promote: there is no writable field to
 set, and the table has no user write policy on the column (the only writer is the
 billing webhook through the SECURITY DEFINER RPC apply_subscription_event,
-migration 0014). The DB column keeps its 'free' default, so a new profile is free
+migration 0018). The DB column keeps its 'free' default, so a new profile is free
 until the webhook says otherwise.
 """
 
@@ -34,7 +34,7 @@ class SubscriptionTier(str, Enum):
     Three tiers, free first: 'free' is the default for a new profile (the full
     safety net plus two care recipients, the board red-line), 'standard' and
     'premium' are the paid tiers. The tier KEY is the join key into plan_tier and
-    feature_entitlement (migration 0014); the human names and prices live in the
+    feature_entitlement (migration 0018); the human names and prices live in the
     plan_tier DATA, not here, so a price or name change is a data edit, no redeploy.
     """
 

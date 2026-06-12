@@ -5,7 +5,7 @@ A user must NOT be able to promote their own subscription tier. The hole was:
 user_profile RLS UPDATE policy permitted on any column, so a free user could self-promote.
 The fix removes subscription_tier from the writable surface (UserProfileUpdate has no such
 field; UserProfileBase no longer carries it), so the value is dropped before the update is
-built, AND the tier column has no user write policy (migration 0014: subscription state is
+built, AND the tier column has no user write policy (migration 0018: subscription state is
 owner-SELECT-only). This file proves the API half: the route NEVER passes subscription_tier
 to update_profile, even when a client sends it.
 
