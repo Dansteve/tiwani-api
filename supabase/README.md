@@ -20,16 +20,21 @@ idempotent no-op against the production table. Migrations are applied via a dire
 Postgres connection (`DATABASE_URL` + asyncpg), run locally by the owner, not on
 Render.
 
-## How these relate to the prototype tables
+## Relationship to the old prototype tables
 
-These migrations are **additive**. The prototype currently uses tables named
-`profiles`, `children`, `chapters`, and `triggers` (a pre-v3 "chapters +
-triggers + status" model). The v3 migrations here create **new** tables
-(`user_profile`, `child_profile`, and more in later migrations) **alongside**
-those prototype tables. They do not drop or alter the prototype tables. The
-prototype tables are replaced in later rebuild tasks (`Docs/Decisions.md` D2,
-the clean rebuild to PRD v3); once the v3 model is in use and the old data is
-handled, a later migration removes them.
+The v3 tables here are now the **authoritative** schema. The clean rebuild to
+PRD v3 (`Docs/Decisions.md` D2) is live: the four pre-v3 prototype routers and
+their data layer were DELETED (CTO audit finding B1, see `HardRules/Api/SETUP.md`
+build posture), so nothing in the running api reads the old prototype tables
+(`profiles`, `children`, `chapters`, `triggers`) anymore. The only mounted
+surface is `/api/v3`, backed solely by the tables in this directory.
+
+These migrations never created, dropped, or altered the prototype tables (they
+only added the v3 tables), so whether the old `profiles` / `children` /
+`chapters` / `triggers` tables still PHYSICALLY exist in the production database
+is not verified here. Dropping any leftover prototype tables is a **separate
+cleanup to confirm** (a future drop migration), not done by anything in this
+list; it has no effect on the api, which no longer references them.
 
 ## Migrations
 
