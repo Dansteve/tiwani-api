@@ -3,7 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import (
-    profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3, strategies, sharing, village,
+    profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3,
+    strategies, sharing, village, billing,
 )
 
 app = FastAPI(
@@ -80,6 +81,14 @@ app.include_router(sharing.router, prefix="/api/v3", tags=["v3 Shared-Child Shar
 # routes require auth and are RLS-scoped; the schema + RPCs are migration 0017 (PENDING
 # OWNER APPLY). The user-facing copy is GOVERNED (psychiatrist sign-off, Task 12).
 app.include_router(village.router, prefix="/api/v3", tags=["v3 Village Hub"])
+# Subscription + billing (Docs/FeatureDecisions.md, the Subscription DEFER entry): the price
+# list and the caller's own subscription (auth, RLS-scoped reads), a STUBBED checkout, and the
+# Stripe webhook. The webhook is the ONLY writer of subscription state and authenticates by
+# STRIPE SIGNATURE (not a Supabase session), writing through the SECURITY DEFINER RPC
+# (migration 0018, PENDING OWNER APPLY) idempotently on the Stripe event id. The live Stripe
+# SDK calls are STUBBED (PENDING OWNER STRIPE KEYS); the entitlement gate
+# (app/services/entitlements.py) is the one server-side allowlist gate for paid features.
+app.include_router(billing.router, prefix="/api/v3", tags=["v3 Subscription & Billing"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.
