@@ -1,13 +1,12 @@
 -- Migration 0009: lci_snapshot + child_id (the per-recipient LCI history) + backfill.
 --
--- !!! PENDING OWNER REVIEW, NOT YET APPLIED !!!
--- This file is written as part of the Multi Care Recipient backend
--- (Docs/FeatureDecisions.md, the design note). It is NOT applied to the production
--- database in this change: the owner reviews the migrations before the live DB is
--- touched, and the one-recipient guard (a second child_profile create is a 409) stays
--- in place until the full feature (api + app switcher) is integrated under review. The
--- code is unit-tested against the fake Supabase client only; this SQL is the artefact
--- the owner applies later. Apply 0009 and 0010 together (the alert_record companion).
+-- !!! APPLIED TO PRODUCTION 2026-06-12 (orchestrated go-live; backfill verified, 0 nulls) !!!
+-- This file is part of the Multi Care Recipient backend (Docs/FeatureDecisions.md, the
+-- design note). It has been applied to the production database (alongside 0010 and 0011)
+-- in the orchestrated multi-recipient go-live; the sole-child backfill was verified (every
+-- lci_snapshot row carries a non-null child_id). The one-recipient guard is lifted and the
+-- plan POST now carries child_id, so every per-recipient read scopes to one named recipient.
+-- The code is also unit-tested against the fake Supabase client. Applied with 0010 and 0011.
 --
 -- WHY: the Life Continuity Index (Product.md section 4.8, AUTHORITATIVE) is computed
 -- and snapshotted PER CHAPTER, but the lci_snapshot table (migration 0004) is keyed by

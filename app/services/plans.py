@@ -47,7 +47,7 @@ from app.models.plan import (
 )
 from app.models.seed import Dimension, Tier
 from app.seed import load_seed
-from app.services.profile import _first, _rows, get_child
+from app.services.profile import _first, _rows, get_child, get_child_by_id
 
 ACTIVITY_RECORD_TABLE = "activity_record"
 PULSE_RECORD_TABLE = "pulse_record"
@@ -83,12 +83,16 @@ def prepare_plan(
     activity_date: Optional[date_type] = None,
     context_note: Optional[str] = None,
     now: Optional[datetime] = None,
+    child_id: Optional[str] = None,
 ) -> PreparationPlan:
     """Run the engine for the user's care recipient, store the record, return the plan.
 
     Steps, in order (section 4.4):
-      0. fetch the user's care recipient (the SL code + permanent tags the engine
-         scores from). No recipient => NoCareRecipientError (the app must onboard).
+      0. fetch the care recipient to plan for (the SL code + permanent tags the engine
+         scores from). With child_id given, the plan is prepared for THAT recipient
+         (verified owned under RLS); with child_id omitted it is the caller's sole
+         recipient (the back-compat default). No recipient (or a child_id the caller
+         does not own) => NoCareRecipientError (the route maps to 409).
       1 to 7 + 10. run_engine (pure, seeded rows).
       9. compute scheduled_pulse_at (activity date + 2h, or 09:00 next day).
       8. INSERT the activity_record and CONFIRM the write (re-read if the insert
@@ -96,11 +100,18 @@ def prepare_plan(
          record.
       10. shape and return the PreparationPlan.
 
+    child_id is the multi-recipient scope (Docs/FeatureDecisions.md, the design note):
+    the app sends the ACTIVE recipient's id so a plan is prepared for the recipient
+    currently being viewed. It is resolved under RLS through get_child_by_id, so a
+    child_id the caller does not own returns None and surfaces as NoCareRecipientError
+    (the api never confirms another user's recipient exists). Omitted child_id keeps
+    the existing sole-child behaviour, so callers that send none are unchanged.
+
     now is injectable for tests (the schedule's "next day" base); it defaults to
     the current time and is the ONLY clock the flow uses (the scoring never reads a
     clock).
     """
-    child = get_child(user)
+    child = get_child_by_id(user, child_id) if child_id is not None else get_child(user)
     if child is None:
         raise NoCareRecipientError("No care recipient to prepare a plan for")
 

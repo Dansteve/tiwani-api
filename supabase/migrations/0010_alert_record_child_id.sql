@@ -1,14 +1,13 @@
 -- Migration 0010: alert_record + child_id, unique key (user_id, chapter) becomes
 -- (user_id, child_id, chapter) + backfill.
 --
--- !!! PENDING OWNER REVIEW, NOT YET APPLIED !!!
--- Written as part of the Multi Care Recipient backend (Docs/FeatureDecisions.md, the
--- design note). It is NOT applied to the production database in this change: the owner
--- reviews the migrations before the live DB is touched, and the one-recipient guard
--- (a second child_profile create is a 409) stays in place until the full feature
--- (api + app switcher) is integrated under review. The code is unit-tested against the
--- fake Supabase client only; this SQL is the artefact the owner applies later. Apply
--- 0009 (the lci_snapshot companion) and 0010 together, 0009 first.
+-- !!! APPLIED TO PRODUCTION 2026-06-12 (orchestrated go-live; backfill verified, 0 nulls) !!!
+-- Part of the Multi Care Recipient backend (Docs/FeatureDecisions.md, the design note).
+-- It has been applied to the production database in the orchestrated multi-recipient
+-- go-live (0009 first, then this, then 0011); the sole-child backfill was verified (every
+-- alert_record row carries a non-null child_id) and the active-alert uniqueness now sits on
+-- (user_id, child_id, chapter). The one-recipient guard is lifted and the plan POST carries
+-- child_id. The code is also unit-tested against the fake Supabase client.
 --
 -- WHY: the Erosion Alert (Product.md section 4.9, AUTHORITATIVE) is one active alert
 -- per chapter, enforced by the (user_id, chapter) UNIQUE the post-pulse evaluation

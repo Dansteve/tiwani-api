@@ -30,15 +30,16 @@ CHILD_PROFILE_TABLE = "child_profile"
 
 
 class CareRecipientExistsError(Exception):
-    """Raised when a second care recipient create is attempted (route maps to 409).
+    """The interim one-recipient guard's error. RETAINED but no longer raised.
 
-    Interim safety guard (Docs/FeatureDecisions.md, multi care recipient, step 1).
-    The dashboard, LCI, and alerts aggregate by user_id only, so a second
-    child_profile would silently pool two people into one mixed resilience score
-    (a Product.md section 4.8 / 4.9 correctness failure). Until the per-recipient
-    reads land, only the FIRST recipient may be created; a second distinct create
-    is rejected. There is no app UI to add a second recipient today, so the
-    corruption path is api-direct only, and this guard closes it.
+    This was raised by create_child while the interim one-recipient guard held
+    (Docs/FeatureDecisions.md, multi care recipient): the dashboard, LCI, and alerts
+    aggregated by user_id only, so a second child_profile would have pooled two people
+    into one mixed resilience score (a Product.md section 4.8 / 4.9 correctness failure).
+    Now that every per-recipient read and the plan POST are scoped by child_id, the guard
+    is lifted and create_child no longer raises this. The type is kept (the POST /child
+    route still catches it as a defensive 409) so a future re-introduction has a home and
+    no caller breaks; it is simply never raised today.
     """
 
 
@@ -145,15 +146,15 @@ def _default_first_name(user: AuthedUser) -> str:
 
 
 def get_child(user: AuthedUser) -> Optional[Dict[str, Any]]:
-    """Return the caller's active care recipient, or None if none exists yet.
+    """Return the caller's most-recent care recipient, or None if none exists yet.
 
-    The MVP models one active recipient per user; this returns the most recently
-    created row (defensive if more than one ever exists). RLS scopes the read to
-    the caller's rows, so it can never surface another user's recipient.
+    A caller may now have several recipients; this returns the most recently created
+    one (the newest). RLS scopes the read to the caller's rows, so it can never surface
+    another user's recipient.
 
-    This is the SOLE-CHILD default reader: resolve_child_id calls it when no explicit
-    child_id is named (back-compat while the one-recipient guard holds), and the
-    onboarding write still uses it to decide create-vs-update.
+    This is the DEFAULT-CHILD reader: resolve_child_id and prepare_plan call it when no
+    explicit child_id is named (the back-compat default, so a client that sends none reads
+    that one recipient), and the onboarding write still uses it to decide create-vs-update.
     """
     client = get_anon_client(user.access_token)
     rows = _rows(
@@ -170,13 +171,12 @@ def get_child(user: AuthedUser) -> Optional[Dict[str, Any]]:
 def list_children(user: AuthedUser) -> List[Dict[str, Any]]:
     """The caller's care recipients, newest first (RLS-scoped).
 
-    The read behind GET /api/v3/children, the list the future app switcher reads to
-    offer the active recipient. The select filters by user_id and runs under the
-    caller's token, so Row Level Security makes another user's recipients physically
-    unreachable: this can only ever return the caller's own children. Ordered by
-    created_at descending so the newest recipient is first. Today the one-recipient
-    guard means this is a single-element (or empty) list; it is already correct for
-    several recipients once the guard is lifted.
+    The read behind GET /api/v3/children, the list the app switcher reads to offer the
+    active recipient. The select filters by user_id and runs under the caller's token, so
+    Row Level Security makes another user's recipients physically unreachable: this can
+    only ever return the caller's own children. Ordered by created_at descending so the
+    newest recipient is first. Now that the one-recipient guard is lifted, this returns
+    every recipient the caller has created (the switcher's full list).
     """
     client = get_anon_client(user.access_token)
     return _rows(
@@ -209,7 +209,7 @@ def get_child_by_id(user: AuthedUser, child_id: str) -> Optional[Dict[str, Any]]
 def resolve_child_id(user: AuthedUser, child_id: Optional[str] = None) -> Optional[str]:
     """Resolve WHICH care recipient a per-recipient read/write is for (the chokepoint).
 
-    The single-recipient chokepoint that replaces "just read the sole child". Every
+    The per-recipient chokepoint that replaces "just read the sole child". Every
     per-recipient read (the dashboard, LCI, alerts) and the post-pulse recompute resolves
     the target child_id through this, so the isolation rule (one named recipient per
     read, never a mix) holds in one place:
@@ -217,9 +217,10 @@ def resolve_child_id(user: AuthedUser, child_id: Optional[str] = None) -> Option
       - child_id given: VERIFY the caller owns it (get_child_by_id under RLS). If they do,
         return it; if not, raise ChildNotFoundError (the route maps to 404). A caller can
         never address another user's recipient, even by guessing an id.
-      - child_id omitted: fall back to the caller's SOLE child (get_child). This is the
-        back-compat default while the one-recipient guard holds (there is at most one), so
-        existing clients that send no child_id keep working and read that one recipient.
+      - child_id omitted: fall back to the caller's most-recent child (get_child). This is
+        the back-compat default so existing clients that send no child_id keep working; with
+        several recipients now allowed, a client should send the active child_id explicitly
+        (the dashboard/LCI/alerts/plan paths pass the switcher's active recipient).
       - no child at all: return None (a fresh user with no recipient yet); the callers
         treat None as "no data" and return the empty/not-started baseline.
     """
@@ -233,24 +234,21 @@ def resolve_child_id(user: AuthedUser, child_id: Optional[str] = None) -> Option
 
 
 def create_child(user: AuthedUser, fields: Dict[str, Any]) -> Dict[str, Any]:
-    """Create the caller's care recipient and return the row.
+    """Create a care recipient for the caller and return the row.
 
     user_id is set from the authenticated session, never from the client; the
     RLS insert policy additionally requires user_id == auth.uid(), so a row can
     only be created for the caller. tags Enum values are coerced to their string
     codes for storage.
 
-    Interim one-recipient guard (Docs/FeatureDecisions.md, step 1): if the caller
-    already has a care recipient, raise CareRecipientExistsError (the route maps
-    it to 409). This is the single create chokepoint, so the guard covers every
-    create path. complete_onboarding never reaches it on a returning user: it
-    only calls create_child when get_child(user) is None and otherwise updates,
-    so the first-child create and the onboarding/update paths are unaffected.
+    Multiple recipients are supported (Docs/FeatureDecisions.md, the multi care
+    recipient design note): the interim one-recipient guard that rejected a second
+    create is lifted now that every per-recipient read (dashboard, LCI, alerts) and
+    the plan POST are scoped by child_id, so two recipients can no longer pool into
+    one mixed resilience score. complete_onboarding still calls this only when
+    get_child(user) is None (otherwise it updates), so onboarding stays a single
+    recipient per user; the app's Settings/switcher is what adds further recipients.
     """
-    if get_child(user) is not None:
-        raise CareRecipientExistsError(
-            "A care recipient already exists for this user"
-        )
     client = get_anon_client(user.access_token)
     insert_row = {**_serialize_child_fields(fields), "user_id": user.id}
     created = _first(client.table(CHILD_PROFILE_TABLE).insert(insert_row).execute())

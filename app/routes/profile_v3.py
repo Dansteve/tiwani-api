@@ -87,14 +87,16 @@ def create_child(
     payload: ChildProfileCreate,
     user: AuthedUser = Depends(get_current_user),
 ) -> ChildProfile:
-    """Create the caller's care recipient.
+    """Create a care recipient for the caller.
 
     user_id is taken from the session, never the client; the RLS insert policy
     requires user_id == auth.uid(), so the row can only belong to the caller.
 
-    Interim one-recipient guard (Docs/FeatureDecisions.md, step 1): a SECOND
-    create is rejected with 409 (the service raises CareRecipientExistsError);
-    the first create, onboarding, and the update path are unaffected.
+    Multiple recipients are supported (Docs/FeatureDecisions.md, the multi care
+    recipient design note): the interim one-recipient 409 guard is lifted now that
+    every per-recipient read and the plan POST scope by child_id. The try/except is
+    kept as a defensive backstop (CareRecipientExistsError is retained but no longer
+    raised), so this never returns 409 today.
     """
     try:
         row = profile_service.create_child(user, payload.model_dump())

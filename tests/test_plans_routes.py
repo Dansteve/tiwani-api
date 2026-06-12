@@ -146,6 +146,46 @@ def test_create_plan_success_returns_the_plan_shape(authed, monkeypatch):
     assert body["strategies"][0]["title"] == "Lanyard"
 
 
+def test_create_plan_forwards_the_child_id_query_param(authed, monkeypatch):
+    # The ?child_id= query param is threaded into the service so the plan is prepared
+    # for the active recipient the app named (the multi-recipient scope).
+    captured = {}
+
+    def _capture(user, **kwargs):
+        captured.update(kwargs)
+        return SAMPLE_PLAN
+
+    monkeypatch.setattr(plans_routes.plans_service, "prepare_plan", _capture)
+    response = authed.post(
+        "/api/v3/plans?child_id=c-9",
+        json={
+            "chapter": "travel",
+            "activity_code": "airport-departure-standard",
+            "today_flags": ["TG-ILL"],
+        },
+    )
+    assert response.status_code == 200
+    assert captured["child_id"] == "c-9"
+
+
+def test_create_plan_without_child_id_passes_none(authed, monkeypatch):
+    # Back-compat: a POST with no ?child_id= forwards child_id=None, so the service
+    # falls back to the caller's sole recipient (existing clients are unchanged).
+    captured = {}
+
+    def _capture(user, **kwargs):
+        captured.update(kwargs)
+        return SAMPLE_PLAN
+
+    monkeypatch.setattr(plans_routes.plans_service, "prepare_plan", _capture)
+    response = authed.post(
+        "/api/v3/plans",
+        json={"chapter": "travel", "activity_code": "airport-departure-standard"},
+    )
+    assert response.status_code == 200
+    assert captured["child_id"] is None
+
+
 def test_create_plan_rejects_unknown_chapter_422(authed):
     response = authed.post(
         "/api/v3/plans",
@@ -310,6 +350,66 @@ def test_prepare_plan_without_a_care_recipient_raises(monkeypatch):
             today_flags=[],
             now=NOW,
         )
+
+
+# --- the multi-recipient scope: child_id picks WHICH recipient the plan is for ---
+
+
+def test_prepare_plan_with_child_id_scopes_to_that_recipient(monkeypatch):
+    # With child_id given, the plan is prepared for THAT recipient: the recipient is
+    # resolved by id (get_child_by_id, owned under RLS), and the stored activity_record
+    # carries that child_id. This is the app sending the ACTIVE recipient's id.
+    fake = _fake_client_for_plan_write()
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+
+    plan = plans_service.prepare_plan(
+        AUTHED,
+        chapter="travel",
+        activity_code="airport-departure-standard",
+        today_flags=["TG-ILL"],
+        activity_date=None,
+        now=NOW,
+        child_id="c-1",
+    )
+
+    assert plan.activity_id == "act-123"
+
+    # The recipient was resolved by id AND scoped to the caller (get_child_by_id), not
+    # via the sole-child reader: the child read carried both id and user_id filters.
+    child_reads = [c for c in fake.calls if c["table"] == "child_profile" and c["op"] == "select"]
+    assert child_reads, "expected a child_profile read to resolve the named recipient"
+    assert ("id", "c-1") in child_reads[0]["filters"]
+    assert ("user_id", "u-1") in child_reads[0]["filters"]
+
+    # The stored activity_record is scoped to that recipient.
+    inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "activity_record"]
+    assert len(inserts) == 1
+    assert inserts[0]["payload"]["child_id"] == "c-1"
+
+
+def test_prepare_plan_with_a_not_owned_child_id_yields_no_plan(monkeypatch):
+    # A child_id the caller does NOT own is invisible under RLS, so get_child_by_id
+    # returns None and prepare_plan raises NoCareRecipientError (the route maps to 409):
+    # a caller can never prepare a plan against another user's recipient, even by guessing.
+    fake = FakeClient({("child_profile", "select"): FakeResponse([])})
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+
+    with pytest.raises(plans_service.NoCareRecipientError):
+        plans_service.prepare_plan(
+            AUTHED,
+            chapter="travel",
+            activity_code="airport-departure-standard",
+            today_flags=[],
+            now=NOW,
+            child_id="not-mine",
+        )
+
+    # No activity_record was written for an unresolved recipient.
+    assert not any(
+        c["op"] == "insert" and c["table"] == "activity_record" for c in fake.calls
+    )
 
 
 # ---------------------------------------------------------------------------

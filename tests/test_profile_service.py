@@ -135,13 +135,7 @@ def test_get_child_returns_row_and_scopes_by_user(monkeypatch):
 
 def test_create_child_sets_user_id_from_session_not_client(monkeypatch):
     created = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
-    # The one-recipient guard reads existing children first (none here), then inserts.
-    anon = FakeClient(
-        {
-            ("child_profile", "select"): FakeResponse([]),
-            ("child_profile", "insert"): FakeResponse([created]),
-        }
-    )
+    anon = FakeClient({("child_profile", "insert"): FakeResponse([created])})
     _patch_clients(monkeypatch, anon)
 
     # Even if a forged user_id is passed in fields, the service overrides it.
@@ -156,12 +150,7 @@ def test_create_child_serializes_enum_tags_to_codes(monkeypatch):
     from app.models.child_profile import SupportLevelCode, Tag
 
     created = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
-    anon = FakeClient(
-        {
-            ("child_profile", "select"): FakeResponse([]),
-            ("child_profile", "insert"): FakeResponse([created]),
-        }
-    )
+    anon = FakeClient({("child_profile", "insert"): FakeResponse([created])})
     _patch_clients(monkeypatch, anon)
 
     svc.create_child(
@@ -180,32 +169,31 @@ def test_create_child_serializes_enum_tags_to_codes(monkeypatch):
     assert payload["tags"] == ["SN-NOISE", "TR-CHANGE"]
 
 
-# --- one-recipient guard (Docs/FeatureDecisions.md, step 1) ----------------
+# --- multiple recipients (Docs/FeatureDecisions.md, guard lifted) ----------
 
 
-def test_create_child_rejects_second_recipient(monkeypatch):
-    # A recipient already exists for the caller: the guard reads it (the select)
-    # and the create must raise CareRecipientExistsError WITHOUT ever inserting.
-    existing = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
-    anon = FakeClient({("child_profile", "select"): FakeResponse([existing])})
+def test_create_child_allows_a_second_recipient(monkeypatch):
+    # The one-recipient guard is lifted (the per-recipient reads + plan POST are now
+    # scoped by child_id). A caller who already has a recipient can create another:
+    # the create inserts and returns the new row, with NO pre-read guard select.
+    created = {"id": "c-2", "user_id": "u-1", "name": "Second"}
+    anon = FakeClient({("child_profile", "insert"): FakeResponse([created])})
     _patch_clients(monkeypatch, anon)
 
-    with pytest.raises(svc.CareRecipientExistsError):
-        svc.create_child(USER, {"name": "Second"})
+    result = svc.create_child(USER, {"name": "Second"})
 
-    # No insert was attempted (no second row could be written).
-    assert not any(c["op"] == "insert" for c in anon.calls)
+    assert result == created
+    inserts = [c for c in anon.calls if c["op"] == "insert"]
+    assert len(inserts) == 1
+    assert inserts[0]["payload"]["user_id"] == "u-1"
+    # The guard's pre-read is gone: a create no longer issues a select first.
+    assert not any(c["op"] == "select" for c in anon.calls)
 
 
 def test_create_child_allows_first_recipient(monkeypatch):
-    # No recipient yet: the guard passes and the FIRST create still succeeds.
+    # The first create still succeeds (no recipient yet); a plain insert, no guard read.
     created = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
-    anon = FakeClient(
-        {
-            ("child_profile", "select"): FakeResponse([]),
-            ("child_profile", "insert"): FakeResponse([created]),
-        }
-    )
+    anon = FakeClient({("child_profile", "insert"): FakeResponse([created])})
     _patch_clients(monkeypatch, anon)
 
     result = svc.create_child(USER, {"name": "Sam"})
@@ -218,8 +206,8 @@ def test_create_child_allows_first_recipient(monkeypatch):
 
 
 def test_resolve_child_id_returns_the_sole_child_when_none_given(monkeypatch):
-    # No explicit child_id: the resolver falls back to the caller's sole recipient
-    # (get_child), the back-compat default while the one-recipient guard holds.
+    # No explicit child_id: the resolver falls back to the caller's most-recent recipient
+    # (get_child), the back-compat default so clients that send no child_id keep working.
     row = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
     anon = FakeClient({("child_profile", "select"): FakeResponse([row])})
     _patch_clients(monkeypatch, anon)
@@ -357,10 +345,10 @@ def test_complete_onboarding_updates_existing_child(monkeypatch):
     assert update_child_calls and ("id", "c-1") in update_child_calls[0]["filters"]
 
 
-def test_complete_onboarding_returning_user_does_not_trigger_recipient_guard(monkeypatch):
-    # A returning user re-running onboarding takes the UPDATE branch, so the
-    # one-recipient guard (which only fires inside create_child) is never reached:
-    # complete_onboarding must succeed with no child_profile insert and no raise.
+def test_complete_onboarding_returning_user_updates_not_duplicates(monkeypatch):
+    # A returning user re-running onboarding takes the UPDATE branch (one recipient
+    # per onboarding, the MVP shape): complete_onboarding edits the existing recipient
+    # and must succeed with NO child_profile insert (it never creates a duplicate).
     existing_child = {"id": "c-1", "user_id": "u-1", "name": "Old"}
     updated_child = {"id": "c-1", "user_id": "u-1", "name": "Sam"}
     profile_row = {"id": "u-1", "first_name": "Ada", "onboarding_complete": True}

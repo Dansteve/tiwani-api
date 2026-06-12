@@ -1,14 +1,13 @@
 -- Migration 0011: pulse_record + child_id (the per-recipient pulse history) + backfill.
 --
--- !!! PENDING OWNER REVIEW, NOT YET APPLIED !!!
--- Written as part of the Multi Care Recipient backend (Docs/FeatureDecisions.md, the
--- design note). It is NOT applied to the production database in this change: the owner
--- reviews the migrations before the live DB is touched, and the one-recipient guard
--- (a second child_profile create is a 409) stays in place until the full feature
--- (api + app switcher) is integrated under review. The code is unit-tested against the
--- fake Supabase client only; this SQL is the artefact the owner applies later. Apply
--- 0009, 0010, and 0011 together (0009 and 0011 add child_id to the two history tables;
--- 0010 swaps the alert unique key).
+-- !!! APPLIED TO PRODUCTION 2026-06-12 (orchestrated go-live; backfill verified, 0 nulls) !!!
+-- Part of the Multi Care Recipient backend (Docs/FeatureDecisions.md, the design note).
+-- It has been applied to the production database in the orchestrated multi-recipient
+-- go-live (with 0009 and 0010; 0009 and 0011 add child_id to the two history tables, 0010
+-- swaps the alert unique key); the backfill from each pulse's own activity_record was
+-- verified (every pulse_record row carries a non-null child_id). The one-recipient guard is
+-- lifted and the plan POST carries child_id. The code is also unit-tested against the fake
+-- Supabase client.
 --
 -- WHY THIS EXISTS (a deliberate addition to the design note's two-migration list):
 -- the design note names the lci_snapshot and alert_record migrations, because those are

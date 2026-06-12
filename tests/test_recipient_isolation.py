@@ -13,7 +13,8 @@ swapping the child_id swaps the result. If any read pooled the two, the asserted
 would collapse to a single mixed value and the test would fail.
 
 No live Supabase (blocked in the sandbox; the task requires mocking). The child_id-aware
-fake here is the proof for this session (the migrations are not applied).
+fake here is the proof at the code layer; the migrations (0009/0010/0011) ARE applied to
+production, so the child_id columns the per-recipient reads filter on exist on the live DB.
 """
 
 from __future__ import annotations

@@ -55,16 +55,23 @@ _TODAY_FLAG_PREFIX = "TG-"
 @router.post("/plans", response_model=PreparationPlan)
 def create_plan(
     payload: PreparePlanRequest,
+    child_id: Optional[str] = Query(default=None),
     user: AuthedUser = Depends(get_current_user),
 ) -> PreparationPlan:
     """Prepare an activity: run the engine, store the record, return the plan.
 
     Validates the chapter is one of the six fixed codes and that every today flag
-    is a TG- code (the section 4.4 day flags). Pulls the caller's care recipient
+    is a TG- code (the section 4.4 day flags). Pulls the care recipient to plan for
     (support level + permanent tags) inside the service, runs the LCE, persists the
     activity_record (write confirmed), schedules the Pulse, and returns the plan in
-    well under 3 seconds (in-memory scoring + one insert). 409 if the caller has no
-    care recipient yet (they must finish onboarding first).
+    well under 3 seconds (in-memory scoring + one insert).
+
+    The optional ?child_id= names WHICH recipient the plan is for (the multi-recipient
+    scope, Docs/FeatureDecisions.md): the app passes the active recipient's id so the
+    plan belongs to the recipient currently being viewed; the service resolves it under
+    RLS. Omitted, it falls back to the caller's sole recipient (back-compat). 409 if the
+    caller has no care recipient (they must finish onboarding first) or names a child_id
+    they do not own (it is invisible under RLS, so it reads as "no recipient").
     """
     _validate_chapter(payload.chapter)
     today_flags = _today_flag_codes(payload.today_flags)
@@ -77,6 +84,7 @@ def create_plan(
             today_flags=today_flags,
             activity_date=payload.date,
             context_note=payload.context_note,
+            child_id=child_id,
         )
     except plans_service.NoCareRecipientError as exc:
         raise HTTPException(
