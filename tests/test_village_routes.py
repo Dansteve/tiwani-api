@@ -440,6 +440,10 @@ def test_claim_conflict_is_409(authed, monkeypatch):
     monkeypatch.setattr(village_routes.village_service, "claim_need", boom)
     r = authed.post(f"/api/v3/village/needs/{NEED}/claim")
     assert r.status_code == 409
+    # N3: the route returns GOVERNED, guarded copy, never the raw Postgres RPC message.
+    detail = r.json()["detail"]
+    assert "no longer open to claim" not in detail  # the raw RPC text is never leaked
+    assert detail == village_routes.render_copy("need.claim_taken")
 
 
 def test_claim_not_member_is_403(authed, monkeypatch):

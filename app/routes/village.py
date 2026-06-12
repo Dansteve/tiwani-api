@@ -46,6 +46,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
+from app.engines.village import render as render_copy
 from app.models.village import (
     ConsentRecorded,
     CreateNeedRequest,
@@ -154,7 +155,7 @@ def post_need(
     except village_service.NotMemberError as exc:
         raise _not_allowed("Only the family owner can post a need") from exc
     except village_service.NeedConflictError as exc:
-        raise _conflict(str(exc)) from exc
+        raise _conflict(render_copy("need.conflict.post")) from exc
 
 
 @router.get("/village/needs", response_model=List[NeedSummary])
@@ -215,7 +216,7 @@ def claim_need(
     except village_service.NeedNotFoundError as exc:
         raise _not_found("Need not found") from exc
     except village_service.NeedConflictError as exc:
-        raise _conflict(str(exc)) from exc
+        raise _conflict(render_copy("need.claim_taken")) from exc
 
 
 @router.post("/village/needs/{need_id}/confirm", response_model=NeedActionResult)
@@ -237,7 +238,7 @@ def confirm_need(
     except village_service.NeedNotFoundError as exc:
         raise _not_found("Need not found") from exc
     except village_service.NeedConflictError as exc:
-        raise _conflict(str(exc)) from exc
+        raise _conflict(render_copy("need.conflict.confirm")) from exc
 
 
 @router.post("/village/needs/{need_id}/done", response_model=NeedActionResult)
@@ -257,7 +258,7 @@ def complete_need(
     except village_service.NeedNotFoundError as exc:
         raise _not_found("Need not found") from exc
     except village_service.NeedConflictError as exc:
-        raise _conflict(str(exc)) from exc
+        raise _conflict(render_copy("need.conflict.done")) from exc
 
 
 @router.post("/village/needs/{need_id}/drop", response_model=NeedActionResult)
@@ -278,7 +279,7 @@ def drop_need(
     except village_service.NeedNotFoundError as exc:
         raise _not_found("Need not found") from exc
     except village_service.NeedConflictError as exc:
-        raise _conflict(str(exc)) from exc
+        raise _conflict(render_copy("need.conflict.drop")) from exc
 
 
 @router.post("/village/needs/{need_id}/cancel", response_model=NeedActionResult)

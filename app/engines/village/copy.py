@@ -113,6 +113,22 @@ COPY: Dict[str, str] = {
         "The people you have invited to lend {name} a hand. You can add or remove anyone, "
         "any time."
     ),
+
+    # --- state-change conflicts (a need moved on before this action). Governed so the raw
+    #     Postgres RPC message (the 0017 P0001 RAISE text) never reaches the user; calm,
+    #     warm, no role labels. The claim-taken conflict reuses need.claim_taken above. ----
+    "need.conflict.post": (
+        "This couldn't be posted just now. Please try again in a moment."
+    ),
+    "need.conflict.confirm": (
+        "This can be confirmed once someone has offered to help with it."
+    ),
+    "need.conflict.done": (
+        "This can be marked as done once someone is covering it."
+    ),
+    "need.conflict.drop": (
+        "There is nothing to step back from here just now."
+    ),
 }
 
 # The copy-keys the api surfaces for each Hub action's result, so the app shows the right
