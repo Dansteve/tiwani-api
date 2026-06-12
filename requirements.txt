@@ -11,3 +11,4 @@ PyJWT>=2.8.0
 gotrue>=2.0.0
 cryptography>=42.0.0
 email-validator>=2.0.0
+reportlab==4.5.1

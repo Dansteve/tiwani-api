@@ -21,9 +21,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import app.engines.cards.pdf as cards_pdf
 import app.routes.cards as cards_routes
 import app.services.cards as cards_service
 from app.auth import AuthedUser, get_current_user
+from app.engines.alerts.guard import ProhibitedWordError
+from app.engines.cards import render_card_pdf
 from app.models.card import (
     CardContent,
     CardCreated,
@@ -562,3 +565,157 @@ def test_revoke_card_not_owned_is_card_not_found(monkeypatch):
 
     with pytest.raises(cards_service.CardNotFoundError):
         cards_service.revoke_card(AUTHED, "not-mine", now=NOW)
+
+
+# ---------------------------------------------------------------------------
+# GET /cards/{card_id}/pdf (owner PDF export): auth, owner-only, real PDF out
+# ---------------------------------------------------------------------------
+
+# A fully populated governed card for the PDF path: it carries the freshness note and the
+# strategy detail, so the renderer assertions can check every block the web card shows.
+# (SAFE_CONTENT above is intentionally minimal; we do not mutate it.)
+PDF_CONTENT = CardContent(
+    child_first_name="Ade",
+    activity_name="School gate drop-off",
+    chapter="school",
+    tier="Pivot",
+    tier_label="Keeping things calm and steady",
+    intro="Thank you for being here. The notes below show what helps most.",
+    strategies=[
+        CardStrategy(title="Build in extra time", detail="No rushing at the gate."),
+        CardStrategy(title="Offer a calm choice", detail="Two options, never a demand."),
+    ],
+    if_difficult="If things get difficult, that is okay. Slow right down and contact the family.",
+    safety_note=(
+        "Follow the family's plan for food, medicines, or Ade's wellbeing; "
+        "call 999 in an emergency."
+    ),
+    freshness_note=(
+        "This plan was prepared on 11 June 2026. Ask the family for an up to date "
+        "version if it is old."
+    ),
+    generated_at=NOW,
+    is_stale=False,
+)
+
+
+def test_get_card_pdf_requires_authentication(client):
+    # The export is auth-gated (401), like the owner View, unlike the public token read.
+    assert client.get("/api/v3/cards/card-1/pdf").status_code == 401
+
+
+def test_get_card_pdf_returns_a_pdf_for_the_owner(authed, monkeypatch):
+    # The owner re-open-by-id path resolves the governed content; the route renders it and
+    # returns an application/pdf attachment with the real PDF magic bytes.
+    monkeypatch.setattr(
+        cards_routes.cards_service,
+        "read_card_content_by_id",
+        lambda user, card_id: PDF_CONTENT,
+    )
+    response = authed.get("/api/v3/cards/card-1/pdf")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="continuity-card-card-1.pdf"'
+    )
+    assert response.content.startswith(b"%PDF")
+    assert len(response.content) > 500  # a non-trivial, rendered document
+
+
+def test_get_card_pdf_not_owned_is_404(authed, monkeypatch):
+    # The same scoping as the View: a card the caller does not own resolves to None -> 404,
+    # and NO PDF is rendered for it.
+    monkeypatch.setattr(
+        cards_routes.cards_service, "read_card_content_by_id", lambda user, card_id: None
+    )
+    response = authed.get("/api/v3/cards/not-mine/pdf")
+    assert response.status_code == 404
+    assert response.headers["content-type"] != "application/pdf"
+
+
+def test_get_card_pdf_uses_the_read_by_id_path_with_the_card_id(authed, monkeypatch):
+    # The route passes the path card_id straight to the owner re-open-by-id service call
+    # (the same scoping as the View), so the PDF can only ever be of the caller's own card.
+    seen = {}
+
+    def _capture(user, card_id):
+        seen["user"] = user
+        seen["card_id"] = card_id
+        return PDF_CONTENT
+
+    monkeypatch.setattr(
+        cards_routes.cards_service, "read_card_content_by_id", _capture
+    )
+    authed.get("/api/v3/cards/card-xyz/pdf")
+    assert seen["card_id"] == "card-xyz"
+    assert seen["user"].id == "u-1"
+
+
+# ---------------------------------------------------------------------------
+# the PDF renderer: same governed content as the web card + the shared guard
+# ---------------------------------------------------------------------------
+
+
+def _drawn_strings(content: CardContent, monkeypatch) -> str:
+    """Render the card and return every string drawn onto the page, joined.
+
+    Captures the text reportlab would put on the page by recording each drawString call
+    (the renderer's only text-emitting boundary), so a test can assert the governed copy
+    is present without a PDF text-extraction dependency. The renderer wraps long
+    paragraphs across several drawString calls, so we join the pieces with spaces and
+    collapse whitespace to compare against the source sentences word-for-word.
+    """
+    captured = []
+    real_canvas = cards_pdf.canvas.Canvas
+
+    class RecordingCanvas(real_canvas):
+        def drawString(self, x, y, text, *args, **kwargs):
+            captured.append(text)
+            return super().drawString(x, y, text, *args, **kwargs)
+
+    monkeypatch.setattr(cards_pdf.canvas, "Canvas", RecordingCanvas)
+    out = render_card_pdf(content)
+    assert out.startswith(b"%PDF")  # a real PDF was still produced
+    return " ".join(" ".join(captured).split())
+
+
+def test_render_card_pdf_draws_the_same_governed_content_as_the_web_card(monkeypatch):
+    text = _drawn_strings(PDF_CONTENT, monkeypatch)
+    # First name only, never a surname; the activity and the plain tier label.
+    assert "Ade" in text
+    assert "Bello" not in text  # no full name leaks onto the page
+    assert "School gate drop-off" in text
+    assert "Keeping things calm and steady" in text
+    # The supportive intro, each top strategy (title + detail), and the two standing lines.
+    assert "Thank you for being here." in text
+    assert "Build in extra time" in text and "No rushing at the gate." in text
+    assert "Offer a calm choice" in text and "Two options, never a demand." in text
+    assert "call 999 in an emergency" in text  # the health-and-safety line
+    assert "If things get difficult, that is okay." in text  # the if-difficult line
+    assert "This plan was prepared on 11 June 2026." in text  # the freshness note
+
+
+def test_render_card_pdf_marks_a_stale_card_with_a_caution(monkeypatch):
+    stale = PDF_CONTENT.model_copy(update={"is_stale": True})
+    text = _drawn_strings(stale, monkeypatch)
+    assert "this card may be out of date" in text  # the stale caution, only when is_stale
+    assert "This plan was prepared on 11 June 2026." in text  # the freshness note still shows
+
+
+def test_render_card_pdf_omits_the_freshness_block_when_absent(monkeypatch):
+    # A card with no freshness note (e.g. SAFE_CONTENT, stored before the field) renders
+    # without that block, and no stale caution, but is still a valid PDF.
+    text = _drawn_strings(SAFE_CONTENT, monkeypatch)
+    assert "prepared on" not in text
+    assert "this card may be out of date" not in text
+    assert "Ade" in text  # the rest of the card still renders
+
+
+def test_render_card_pdf_enforces_the_shared_non_clinical_guard(monkeypatch):
+    # A prohibited clinical word on ANY emitted field must raise at RENDER time (the same
+    # one shared guard the assembler uses), so it can never reach a printed page.
+    dirty = PDF_CONTENT.model_copy(
+        update={"intro": "Thank you for being here. This is not a diagnosis of anything."}
+    )
+    with pytest.raises(ProhibitedWordError):
+        render_card_pdf(dirty)
