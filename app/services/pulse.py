@@ -29,6 +29,7 @@ from app.services import alerts as alerts_service
 from app.services import lci as lci_service
 from app.services import strategies as strategy_library
 from app.services.profile import _first, _rows
+from app.services.timestamps import parse_timestamptz
 
 ACTIVITY_RECORD_TABLE = "activity_record"
 PULSE_RECORD_TABLE = "pulse_record"
@@ -299,15 +300,4 @@ def _utc_now(now: Optional[datetime]) -> datetime:
 
 def _parse_dt(value: Any) -> Optional[datetime]:
     """Parse a timestamptz value (ISO string or datetime) to an aware datetime."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    if isinstance(value, str):
-        text = value.replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-    return None
+    return parse_timestamptz(value)
