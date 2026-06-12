@@ -131,3 +131,57 @@ def test_a_prohibited_word_injected_into_the_seed_would_be_caught(word):
     tainted.append(f"Prepare a calm space and avoid {word} discussion.")
     with pytest.raises(ProhibitedWordError):
         assert_clean(*tainted)
+
+
+# --- The Family "Mealtime: routine meal" food-safety boundary (Sprint 4 Content) ---
+#
+# The routine-meal strategies keep food the SAME day to day (rank 1 "Same foods, same
+# plate, same seating"). For an additional-needs family that batch-cooks or repeats one
+# trusted "safe food", that sameness means stored/reheated food, so the rank-1 strategy
+# body carries a clear, non-alarming safe-food-handling note: chill, reheat, use-by. It
+# is governed copy (no clinical word), so the SAME seed guard above must keep covering
+# it; these tests pin the note in place and prove the guard would catch it if a future
+# edit made this strategy or its scenario explanation clinical.
+
+ROUTINE_MEAL_KEY = ("family", "mealtime-routine-meal")
+
+
+def _routine_meal_scenario():
+    """The loaded Family 'Mealtime: routine meal' scenario row (or fail clearly)."""
+    chapter, code = ROUTINE_MEAL_KEY
+    for scenario in load_seed().scenarios:
+        if scenario.chapter == chapter and scenario.activity_code == code:
+            return scenario
+    raise AssertionError(f"seed is missing the {chapter}/{code} scenario")
+
+
+def test_routine_meal_carries_a_non_alarming_food_safety_boundary():
+    # The Content deliverable: the rank-1 strategy body must hold the safe-food-handling
+    # note, and it must read as governed safe-handling guidance (chill, reheat, use-by),
+    # not a clinical instruction. If the note is dropped or reworded away, this fails.
+    scenario = _routine_meal_scenario()
+    rank_one = next(s for s in scenario.strategies if s.rank == 1)
+    body = rank_one.body.lower()
+    assert "use-by" in body
+    assert "reheat" in body
+    assert ("refrigerate" in body) or ("chill" in body) or ("fridge" in body)
+    # Non-alarming + non-clinical: the same shared guard the engines call must pass over
+    # the body verbatim (no prohibited clinical word slipped in with the safety note).
+    assert find_prohibited_words(rank_one.body) == []
+    assert_clean(rank_one.body)  # must not raise
+
+
+@pytest.mark.parametrize("word", PROHIBITED_WORDS)
+def test_a_clinical_word_in_the_routine_meal_strategy_or_explanation_is_caught(word):
+    # Anchored to the REAL loaded row: prove the guard fails if THIS scenario's strategy
+    # body OR its scoring explanation (rationale) were made clinical. Inject each barred
+    # word into the actual strings and confirm the shared guard rejects them, so the
+    # food-safety note can never be the seam a clinical phrase enters through.
+    scenario = _routine_meal_scenario()
+    rank_one = next(s for s in scenario.strategies if s.rank == 1)
+    tainted_strategy = f"{rank_one.body} It can also ease {word} at the table."
+    tainted_explanation = f"{scenario.rationale} Note any {word} when scoring."
+    with pytest.raises(ProhibitedWordError):
+        assert_clean(tainted_strategy)
+    with pytest.raises(ProhibitedWordError):
+        assert_clean(tainted_explanation)
