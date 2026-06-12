@@ -32,6 +32,8 @@ from typing import Iterable
 # the sharing guard enforces.
 from app.engines.alerts.guard import (
     PROHIBITED_WORDS as CLINICAL_PROHIBITED_WORDS,
+)
+from app.engines.alerts.guard import (
     find_prohibited_words as _find_clinical_words,
 )
 

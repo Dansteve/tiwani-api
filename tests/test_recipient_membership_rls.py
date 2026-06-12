@@ -477,7 +477,7 @@ class RlsDB:
         immutable = {"recipient_id", "token", "email", "role", "invited_by", "expires_at"}
         bad = immutable & set(changes)
         if bad:
-            raise PermissionError(f"invite identity/email-bind columns are immutable: {sorted(bad)}")
+            raise PermissionError(f"invite identity/email-bind columns immutable: {sorted(bad)}")
         for stamp in ("redeemed_at", "redeemed_by", "revoked_at"):
             if stamp in changes:
                 if getattr(invite, stamp) is not None:
