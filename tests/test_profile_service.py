@@ -183,11 +183,12 @@ def test_create_child_allows_a_second_recipient(monkeypatch):
     result = svc.create_child(USER, {"name": "Second"})
 
     assert result == created
-    inserts = [c for c in anon.calls if c["op"] == "insert"]
+    inserts = [c for c in anon.calls if c.get("op") == "insert"]
     assert len(inserts) == 1
     assert inserts[0]["payload"]["user_id"] == "u-1"
-    # The guard's pre-read is gone: a create no longer issues a select first.
-    assert not any(c["op"] == "select" for c in anon.calls)
+    # The guard's pre-read is gone: a create no longer issues a select first. (.get skips the
+    # best-effort owner-bootstrap rpc entry, which is logged with no "op" key.)
+    assert not any(c.get("op") == "select" for c in anon.calls)
 
 
 def test_create_child_allows_first_recipient(monkeypatch):
@@ -200,6 +201,47 @@ def test_create_child_allows_first_recipient(monkeypatch):
 
     assert result == created
     assert any(c["op"] == "insert" for c in anon.calls)
+
+
+# --- owner-membership bootstrap (0015 substrate) ---------------------------
+
+
+def test_create_child_bootstraps_owner_membership(monkeypatch):
+    # A new recipient gets its creator's OWNER recipient_membership minted via the 0015
+    # substrate RPC, so per-recipient sharing + the Village Hub (which key reads on an owner
+    # membership row) resolve for the creator. The RPC is called with the new recipient id.
+    created = {"id": "c-9", "user_id": "u-1", "name": "Sam"}
+    anon = FakeClient(
+        {
+            ("child_profile", "insert"): FakeResponse([created]),
+            ("rpc", "bootstrap_recipient_owner"): FakeResponse("m-1"),
+        }
+    )
+    _patch_clients(monkeypatch, anon)
+
+    result = svc.create_child(USER, {"name": "Sam"})
+
+    assert result == created
+    rpc_calls = [c for c in anon.calls if c.get("rpc") == "bootstrap_recipient_owner"]
+    assert len(rpc_calls) == 1
+    assert rpc_calls[0]["params"] == {"p_child_id": "c-9"}
+
+
+def test_create_child_survives_bootstrap_failure(monkeypatch):
+    # Best-effort: if the owner-membership mint errors, recipient creation still returns the
+    # created row (the owner row can be backfilled); the failure never propagates.
+    created = {"id": "c-9", "user_id": "u-1", "name": "Sam"}
+    anon = FakeClient(
+        {
+            ("child_profile", "insert"): FakeResponse([created]),
+            ("rpc", "bootstrap_recipient_owner"): RuntimeError("substrate unavailable"),
+        }
+    )
+    _patch_clients(monkeypatch, anon)
+
+    result = svc.create_child(USER, {"name": "Sam"})
+
+    assert result == created
 
 
 # --- the child_id resolver + the switcher list (multi care recipient) -------
@@ -311,11 +353,13 @@ def test_complete_onboarding_creates_child_when_none_and_marks_complete(monkeypa
     assert result["profile"]["onboarding_complete"] is True
     assert result["child"] == child_row
     # The profile update flipped onboarding_complete via the RLS-scoped client.
-    update_calls = [c for c in anon.calls if c["table"] == "user_profile" and c["op"] == "update"]
+    update_calls = [
+        c for c in anon.calls if c.get("table") == "user_profile" and c.get("op") == "update"
+    ]
     assert update_calls and update_calls[0]["payload"] == {"onboarding_complete": True}
     # first_activity is carried but NOT written as a child column (no scoring here).
     insert_calls = [
-        c for c in anon.calls if c["table"] == "child_profile" and c["op"] == "insert"
+        c for c in anon.calls if c.get("table") == "child_profile" and c.get("op") == "insert"
     ]
     assert "first_activity" not in insert_calls[0]["payload"]
 

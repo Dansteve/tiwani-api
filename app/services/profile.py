@@ -20,6 +20,7 @@ active care recipient per user for the MVP; user_id == auth.uid()).
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
@@ -27,6 +28,12 @@ from app.db import get_anon_client
 
 USER_PROFILE_TABLE = "user_profile"
 CHILD_PROFILE_TABLE = "child_profile"
+
+logger = logging.getLogger(__name__)
+
+# The 0015 substrate RPC that mints the creator's OWNER recipient_membership for a new
+# recipient. Per-recipient sharing and the Village Hub key their reads on this owner row.
+BOOTSTRAP_OWNER_FN = "bootstrap_recipient_owner"
 
 
 class CareRecipientExistsError(Exception):
@@ -233,6 +240,29 @@ def resolve_child_id(user: AuthedUser, child_id: Optional[str] = None) -> Option
     return sole["id"] if sole is not None else None
 
 
+def _bootstrap_owner_membership(client: Any, child_row: Dict[str, Any]) -> None:
+    """Mint the creator's OWNER recipient_membership for a freshly created recipient.
+
+    The 0015 substrate keys per-recipient sharing and the Village Hub on an owner
+    membership row: without it the creator is not a "member" of their own recipient, so the
+    membership-scoped reads (the village board, the share roster) return them nothing.
+    bootstrap_recipient_owner is idempotent (it reuses an existing active owner row) and
+    owner-checked at the DB (it requires child_profile.user_id == auth.uid()).
+
+    Best-effort by design: the recipient is already created, so a transient bootstrap
+    failure must NOT fail creation (which, with no child-insert idempotency, would risk a
+    duplicate recipient on retry). A failure is logged and the owner row can be backfilled;
+    it never propagates.
+    """
+    child_id = child_row.get("id") if isinstance(child_row, dict) else None
+    if not child_id:
+        return
+    try:
+        client.rpc(BOOTSTRAP_OWNER_FN, {"p_child_id": child_id}).execute()
+    except Exception:  # noqa: BLE001 - best-effort; creation must not fail on the mint
+        logger.warning("bootstrap_recipient_owner failed for recipient %s", child_id)
+
+
 def create_child(user: AuthedUser, fields: Dict[str, Any]) -> Dict[str, Any]:
     """Create a care recipient for the caller and return the row.
 
@@ -252,10 +282,11 @@ def create_child(user: AuthedUser, fields: Dict[str, Any]) -> Dict[str, Any]:
     client = get_anon_client(user.access_token)
     insert_row = {**_serialize_child_fields(fields), "user_id": user.id}
     created = _first(client.table(CHILD_PROFILE_TABLE).insert(insert_row).execute())
-    if created is not None:
-        return created
-    # Fall back to reading back the freshly created row under RLS.
-    return get_child(user) or insert_row
+    if created is None:
+        # Fall back to reading back the freshly created row under RLS.
+        created = get_child(user) or insert_row
+    _bootstrap_owner_membership(client, created)
+    return created
 
 
 def update_child(
