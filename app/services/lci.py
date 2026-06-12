@@ -47,6 +47,7 @@ from app.models.chapters_v3 import Chapter
 from app.models.lci import ChapterLci, OverallLci
 from app.models.seed import Tier
 from app.services.profile import _rows, resolve_child_id
+from app.services.timestamps import parse_timestamptz
 
 PULSE_RECORD_TABLE = "pulse_record"
 LCI_SNAPSHOT_TABLE = "lci_snapshot"
@@ -315,15 +316,4 @@ def _parse_dt(value: Any) -> Optional[datetime]:
     directly. A naive value is treated as UTC so comparisons against the aware `now`
     never raise. Returns None for an unparseable value.
     """
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    if isinstance(value, str):
-        text = value.replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-    return None
+    return parse_timestamptz(value)
