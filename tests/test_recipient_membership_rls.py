@@ -158,6 +158,60 @@ def test_no_user_insert_policy_on_either_table():
     assert "for delete" not in SQL_NORM
 
 
+def test_owner_update_is_revoke_only_enforced_by_a_trigger():
+    # A policy gates WHICH ROWS an owner may update; it CANNOT gate WHICH COLUMNS change. The
+    # adversarial review found the two owner UPDATE policies were therefore general-purpose
+    # owner writes (role escalation / membership hijack / invite email-bind rewrite / stamp
+    # replay). Defense in depth: a BEFORE UPDATE trigger on each table makes the owner UPDATE
+    # revoke-only (membership) and revoke-or-redeem-stamp + write-once (invite).
+    # -- recipient_membership: revoke-only trigger freezes every identity/grant column.
+    mfn = _function_block("tiwani_private.recipient_membership_revoke_only")
+    assert "returns trigger" in mfn
+    # Pin EVERY identity/grant column (not just the marquee ones), so a forgotten freeze on
+    # any column is caught, not only escalation/hijack/graft.
+    for col in (
+        "new.id is distinct from old.id",
+        "new.recipient_id is distinct from old.recipient_id",  # no cross-recipient graft
+        "new.user_id is distinct from old.user_id",            # no hijack
+        "new.role is distinct from old.role",                  # no escalation
+        "new.granted_by is distinct from old.granted_by",
+        "new.granted_at is distinct from old.granted_at",
+        "new.created_at is distinct from old.created_at",
+    ):
+        assert col in mfn, f"membership trigger must freeze: {col}"
+    # Revoke is one-way: only an active row may be set revoked.
+    assert "old.revoked_at is not null or new.revoked_at is null" in mfn
+    assert "security invoker" in mfn and "set search_path = ''" in mfn
+    assert (
+        "create trigger recipient_membership_revoke_only_t before update "
+        "on public.recipient_membership" in SQL_NORM
+    )
+    # -- recipient_invite: state guard freezes identity/email-bind + write-once stamps.
+    ifn = _function_block("tiwani_private.recipient_invite_state_guard")
+    assert "returns trigger" in ifn
+    # Pin EVERY immutable identity/email-bind column.
+    for col in (
+        "new.id is distinct from old.id",
+        "new.recipient_id is distinct from old.recipient_id",
+        "new.token is distinct from old.token",            # no token swap
+        "new.email is distinct from old.email",            # no email-bind rewrite
+        "new.role is distinct from old.role",              # no role escalation
+        "new.invited_by is distinct from old.invited_by",
+        "new.expires_at is distinct from old.expires_at",
+        "new.created_at is distinct from old.created_at",
+    ):
+        assert col in ifn, f"invite guard must freeze: {col}"
+    # redeemed_at/redeemed_by/revoked_at are write-once (a spent invite can never be re-armed).
+    assert "old.redeemed_at is not null and new.redeemed_at is distinct from old.redeemed_at" in ifn
+    assert "old.redeemed_by is not null and new.redeemed_by is distinct from old.redeemed_by" in ifn
+    assert "old.revoked_at is not null and new.revoked_at is distinct from old.revoked_at" in ifn
+    assert "security invoker" in ifn and "set search_path = ''" in ifn
+    assert (
+        "create trigger recipient_invite_state_guard_t before update "
+        "on public.recipient_invite" in SQL_NORM
+    )
+
+
 def test_invite_is_email_bound_single_use_short_lived_and_revocable():
     block = _invite_table_block()
     nb = _norm(block)
@@ -339,6 +393,24 @@ class RlsDB:
             raise PermissionError("only an owner may revoke a membership")
         target.revoked_at = now
 
+    # --- recipient_membership_revoke_only trigger (defense in depth on the UPDATE policy) ---
+    def owner_update_membership(self, caller, target, **changes) -> None:
+        # The owner-only UPDATE policy admits the ROW; the revoke_only BEFORE UPDATE trigger
+        # then admits ONLY a revoke (set revoked_at on an active row). Any other column change
+        # is rejected at the database, so an owner cannot escalate a role or hijack
+        # user_id/recipient_id (the CRITICAL hole the adversarial review caught).
+        if not self.is_member(caller, target.recipient_id, "owner"):
+            raise PermissionError("only an owner may update a membership")
+        forbidden = set(changes) - {"revoked_at"}
+        if forbidden:
+            raise PermissionError(
+                f"membership update is revoke-only; cannot change {sorted(forbidden)}"
+            )
+        if "revoked_at" in changes:
+            if target.revoked_at is not None or changes["revoked_at"] is None:
+                raise PermissionError("revoke is one-way (active row -> revoked only)")
+            target.revoked_at = changes["revoked_at"]
+
     # --- mint_recipient_invite (owner-gated) -----------------------------------------
     def mint_invite(
         self, caller: Optional[str], recipient_id: str, email: str, role: str, token: str,
@@ -393,6 +465,24 @@ class RlsDB:
         m = Membership(recipient_id=inv.recipient_id, user_id=caller, role=inv.role)
         self.memberships.append(m)
         return m
+
+    # --- recipient_invite_state_guard trigger (defense in depth on the UPDATE policy) ----
+    def owner_update_invite(self, caller, invite, **changes) -> None:
+        # The owner-only UPDATE policy admits the row; the state_guard BEFORE UPDATE trigger
+        # freezes identity/email-bind columns and makes redeemed_at/redeemed_by/revoked_at
+        # write-once. So an owner may only revoke a pending invite; they cannot rewrite the
+        # email-bind/role to redirect it, nor clear a spent stamp to replay it (the HIGH hole).
+        if not self.is_member(caller, invite.recipient_id, "owner"):
+            raise PermissionError("only an owner may update an invite")
+        immutable = {"recipient_id", "token", "email", "role", "invited_by", "expires_at"}
+        bad = immutable & set(changes)
+        if bad:
+            raise PermissionError(f"invite identity/email-bind columns are immutable: {sorted(bad)}")
+        for stamp in ("redeemed_at", "redeemed_by", "revoked_at"):
+            if stamp in changes:
+                if getattr(invite, stamp) is not None:
+                    raise PermissionError(f"{stamp} is write-once")
+                setattr(invite, stamp, changes[stamp])
 
 
 # --- a two-recipient world: owner OW1 of R1, owner OW2 of R2, a viewer, a stranger ----
@@ -516,3 +606,40 @@ def test_owner_role_grants_breadth_below_it(db):
     assert db.is_member(VIEWER, R1, "owner") is False
     assert db.is_member(EDITOR, R1, "editor") is True
     assert db.is_member(EDITOR, R1, "owner") is False
+
+
+def test_owner_cannot_escalate_or_hijack_a_membership_via_update(db):
+    # The CRITICAL hole: the owner UPDATE policy had no column restriction, so an owner could
+    # rewrite role/user_id/recipient_id directly. The revoke-only trigger now permits ONLY a
+    # revoke.
+    viewer_row = next(m for m in db.memberships if m.user_id == VIEWER)
+    with pytest.raises(PermissionError):  # cannot promote a viewer to owner (escalation)
+        db.owner_update_membership(OW1, viewer_row, role="owner")
+    with pytest.raises(PermissionError):  # cannot re-point to another user (hijack)
+        db.owner_update_membership(OW1, viewer_row, user_id=STRANGER)
+    with pytest.raises(PermissionError):  # cannot graft onto another recipient
+        db.owner_update_membership(OW1, viewer_row, recipient_id=R2)
+    # ... but CAN revoke it (the one permitted update).
+    db.owner_update_membership(OW1, viewer_row, revoked_at=NOW)
+    assert viewer_row.revoked_at == NOW
+    assert db.is_member(VIEWER, R1, "viewer") is False
+    with pytest.raises(PermissionError):  # a revoke is one-way: cannot be cleared to re-arm
+        db.owner_update_membership(OW1, viewer_row, revoked_at=None)
+
+
+def test_owner_cannot_rewrite_or_replay_an_invite_via_update(db):
+    # The HIGH hole: the invite UPDATE policy had no column restriction, so an owner could
+    # rewrite a pending invite's email-bind/role, or clear redeemed_at to replay. The state
+    # guard freezes identity and makes the stamps write-once.
+    inv = db.mint_invite(OW1, R1, "invitee@example.com", "viewer", "tok-guard")
+    with pytest.raises(PermissionError):  # cannot redirect the email-bind
+        db.owner_update_invite(OW1, inv, email="attacker@example.com")
+    with pytest.raises(PermissionError):  # cannot escalate the granted role
+        db.owner_update_invite(OW1, inv, role="editor")
+    db.redeem_invite(INVITEE, "tok-guard")
+    with pytest.raises(PermissionError):  # once redeemed, cannot be cleared to replay
+        db.owner_update_invite(OW1, inv, redeemed_at=None)
+    # The owner CAN revoke a pending invite (the one permitted state change).
+    inv2 = db.mint_invite(OW1, R1, "two@example.com", "viewer", "tok-guard-2")
+    db.owner_update_invite(OW1, inv2, revoked_at=NOW)
+    assert inv2.revoked_at == NOW

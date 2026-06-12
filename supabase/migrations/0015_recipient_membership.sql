@@ -237,10 +237,12 @@ grant execute on function tiwani_private.is_child_member(uuid, text) to anon;
 -- WRITE: there is NO user INSERT policy and NO user-broad UPDATE/DELETE policy that a
 -- viewer could ride. Membership writes happen ONLY through the SECURITY DEFINER RPCs
 -- below (grant / revoke), which check OWNER first. The single OWNER-only UPDATE policy
--- here exists so the owner-only revoke RPC (which runs SECURITY INVOKER under the owner's
--- session) can stamp revoked_at; it is guarded by is_child_member(... 'owner') on BOTH
--- the using and the with check, and it forbids changing the identity columns, so it can
--- only flip revoked_at on a row of a recipient the caller owns. A viewer's id is NEVER
+-- here exists so the owner-driven revoke (a direct UPDATE under the owner's session) can
+-- stamp revoked_at; it is guarded by is_child_member(... 'owner') on BOTH the using and the
+-- with check. A policy alone CANNOT restrict which columns change, so the revoke-only
+-- guarantee is enforced by the recipient_membership_revoke_only BEFORE UPDATE trigger in
+-- section 3.5 below: the only permitted UPDATE is setting revoked_at on an active row, every
+-- identity/grant column is immutable, and a revoke cannot be undone. A viewer's id is NEVER
 -- OR-ed into this policy.
 -- =====================================================================
 alter table public.recipient_membership enable row level security;
@@ -271,10 +273,14 @@ create policy recipient_membership_update_owner
 -- a select (it goes through the redeem RPC), so no anon select policy is needed or wanted.
 --
 -- WRITE: NO user INSERT policy (mint is an RPC), NO user DELETE policy. A single
--- OWNER-only UPDATE policy lets the owner-revoke RPC stamp revoked_at on an invite of a
--- recipient the caller owns; the redeem path stamps redeemed_at/redeemed_by from inside
--- the SECURITY DEFINER redeem RPC (past RLS), because the redeemer is the invitee, not the
--- owner, and must not get a broad write policy.
+-- OWNER-only UPDATE policy lets the owner stamp revoked_at on an invite of a recipient the
+-- caller owns; the redeem path stamps redeemed_at/redeemed_by from inside the SECURITY
+-- DEFINER redeem RPC (past RLS), because the redeemer is the invitee, not the owner, and
+-- must not get a broad write policy. Because a policy cannot restrict which columns change,
+-- the recipient_invite_state_guard BEFORE UPDATE trigger (section 3.5) freezes every
+-- identity/email-bind column and makes redeemed_at/redeemed_by/revoked_at write-once, so an
+-- owner cannot rewrite the email-bind or role of a pending invite, nor clear a redeemed or
+-- revoked stamp to replay it.
 -- =====================================================================
 alter table public.recipient_invite enable row level security;
 
@@ -290,6 +296,99 @@ create policy recipient_invite_update_owner
     for update
     using (tiwani_private.is_child_member(recipient_id, 'owner'))
     with check (tiwani_private.is_child_member(recipient_id, 'owner'));
+
+-- =====================================================================
+-- 3.5 Revoke-only / write-once UPDATE guards (defense in depth on the owner UPDATE policies).
+--
+-- An RLS policy gates WHICH ROWS an owner may update; it CANNOT gate WHICH COLUMNS change.
+-- Without the guards below, the two owner UPDATE policies above are general-purpose owner
+-- writes: an owner could `UPDATE recipient_membership SET user_id=..., role='owner'` to
+-- escalate or hijack a membership (even re-point recipient_id), or
+-- `UPDATE recipient_invite SET email=...` to defeat the email-bind, or clear
+-- redeemed_at/revoked_at to replay a spent invite. These BEFORE UPDATE triggers make each
+-- owner UPDATE strictly a revoke (membership) or a revoke plus the redeem RPC's single-use
+-- stamp (invite), and nothing else. They run SECURITY INVOKER with an empty search_path and
+-- touch no schema objects, only NEW/OLD. New rows are born from the SECURITY DEFINER
+-- bootstrap/redeem RPCs via INSERT, which a BEFORE UPDATE trigger never sees, so the grant
+-- paths are unaffected. (Trigger functions execute regardless of EXECUTE privilege, so the
+-- revoke-from-public below only bars calling them directly as a function, never the trigger.)
+-- =====================================================================
+
+-- recipient_membership: the ONLY permitted UPDATE is an owner revoke (set revoked_at on a
+-- currently-active row). Every identity/grant column is immutable; a revoke is final.
+create or replace function tiwani_private.recipient_membership_revoke_only()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+    if new.id             is distinct from old.id
+       or new.recipient_id is distinct from old.recipient_id
+       or new.user_id      is distinct from old.user_id
+       or new.role         is distinct from old.role
+       or new.granted_by   is distinct from old.granted_by
+       or new.granted_at   is distinct from old.granted_at
+       or new.created_at   is distinct from old.created_at then
+        raise exception 'recipient_membership update is revoke-only: identity/grant columns are immutable'
+            using errcode = '42501';
+    end if;
+    if old.revoked_at is not null or new.revoked_at is null then
+        raise exception 'recipient_membership update is revoke-only: may only set revoked_at on an active row'
+            using errcode = '42501';
+    end if;
+    return new;
+end;
+$$;
+
+revoke all on function tiwani_private.recipient_membership_revoke_only() from public;
+
+drop trigger if exists recipient_membership_revoke_only_t on public.recipient_membership;
+create trigger recipient_membership_revoke_only_t
+    before update on public.recipient_membership
+    for each row
+    execute function tiwani_private.recipient_membership_revoke_only();
+
+-- recipient_invite: identity/email-bind columns are immutable; the lifecycle stamps
+-- (redeemed_at, redeemed_by, revoked_at) are WRITE-ONCE (null -> set, never cleared). This
+-- permits exactly the owner revoke (revoked_at) and the redeem RPC's single-use stamp
+-- (redeemed_at/redeemed_by), and forbids rewriting the email-bind/role/token or re-arming a
+-- spent invite.
+create or replace function tiwani_private.recipient_invite_state_guard()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+    if new.id             is distinct from old.id
+       or new.recipient_id is distinct from old.recipient_id
+       or new.token        is distinct from old.token
+       or new.email        is distinct from old.email
+       or new.role         is distinct from old.role
+       or new.invited_by   is distinct from old.invited_by
+       or new.expires_at   is distinct from old.expires_at
+       or new.created_at   is distinct from old.created_at then
+        raise exception 'recipient_invite identity/email-bind columns are immutable'
+            using errcode = '42501';
+    end if;
+    if (old.redeemed_at is not null and new.redeemed_at is distinct from old.redeemed_at)
+       or (old.redeemed_by is not null and new.redeemed_by is distinct from old.redeemed_by)
+       or (old.revoked_at  is not null and new.revoked_at  is distinct from old.revoked_at) then
+        raise exception 'recipient_invite redeemed_at/redeemed_by/revoked_at are write-once'
+            using errcode = '42501';
+    end if;
+    return new;
+end;
+$$;
+
+revoke all on function tiwani_private.recipient_invite_state_guard() from public;
+
+drop trigger if exists recipient_invite_state_guard_t on public.recipient_invite;
+create trigger recipient_invite_state_guard_t
+    before update on public.recipient_invite
+    for each row
+    execute function tiwani_private.recipient_invite_state_guard();
 
 -- =====================================================================
 -- 4. bootstrap_recipient_owner(child_id) -- mint the creator's owner membership.
