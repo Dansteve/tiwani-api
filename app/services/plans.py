@@ -39,14 +39,16 @@ from app.db import get_anon_client
 from app.engines.lce import EngineResult, run_engine
 from app.models.plan import (
     ActivityOption,
+    AlsoWorkedIn,
     DimensionExplanations,
     DimensionScores,
     PlanStrategy,
     PlanSummary,
     PreparationPlan,
 )
-from app.models.seed import Dimension, Tier
+from app.models.seed import HIGH_DIMENSION_SCORE, Dimension, Tier
 from app.seed import load_seed
+from app.services import strategies as strategy_library
 from app.services.profile import _first, _rows, get_child, get_child_by_id
 
 ACTIVITY_RECORD_TABLE = "activity_record"
@@ -126,6 +128,22 @@ def prepare_plan(
         today_flags=today_flags,
     )
 
+    # Strategy Library (Task 9, section 4.10): the library flags REORDER / FILTER / APPEND the
+    # engine's already-ranked starter strategies (promoted first, suppressed excluded,
+    # cross-context appended), and carry each strategy's library_item_id + "Also worked in
+    # [chapter]" tags. This changes the strategy ORDER and the appended cross-context items
+    # only; it NEVER touches result.scores / total / tier (those stay section 4.4 exact). The
+    # reads are fail-open, so a missing 0014 table leaves the engine's starter order intact.
+    high_dimensions = _high_dimensions(result.scores)
+    library_inputs = strategy_library.ranking_inputs_for_plan(
+        user,
+        child_id=child["id"],
+        chapter=chapter,
+        scenario_type=activity_code,
+        high_dimensions=high_dimensions,
+    )
+    plan_strategies = _apply_library(result.strategies, library_inputs)
+
     scheduled_pulse_at = compute_scheduled_pulse_at(activity_date, now=now)
 
     stored = _store_activity_record(
@@ -138,9 +156,23 @@ def prepare_plan(
         context_note=context_note,
         scheduled_pulse_at=scheduled_pulse_at,
         result=result,
+        plan_strategies=plan_strategies,
     )
 
-    return _to_plan(stored, result, chapter, activity_code, scheduled_pulse_at)
+    # Auto-save (section 4.10): persist each starter strategy as a strategy_library_item for
+    # this recipient + scenario, idempotent on a re-plan. Non-interrupting (the plan is already
+    # stored), so a library write failure never fails the plan. Runs AFTER the store so the plan
+    # is durable first.
+    strategy_library.auto_save_plan_strategies(
+        user,
+        child_id=child["id"],
+        chapter=chapter,
+        scenario_type=activity_code,
+        strategies=[s.model_dump() for s in plan_strategies],
+        high_dimensions=high_dimensions,
+    )
+
+    return _to_plan(stored, result, chapter, activity_code, scheduled_pulse_at, plan_strategies)
 
 
 def compute_scheduled_pulse_at(
@@ -387,6 +419,75 @@ def _parse_dt(value: Any) -> Optional[datetime]:
 
 
 # ---------------------------------------------------------------------------
+# the Strategy Library overlay (Task 9, section 4.10): reorder / filter / append
+# ---------------------------------------------------------------------------
+
+
+def _high_dimensions(scores: Dict[Dimension, int]) -> List[str]:
+    """The dimension codes scoring at or above the section 4.4 step 7 high cut (>= 3).
+
+    The cross-context test matches a saved strategy's dimensions against THIS activity's
+    high-scoring dimensions; this returns those dimension codes (temporal/sensory/...). Reads
+    the named HIGH_DIMENSION_SCORE bound, never the literal (the SeedData.md hard rule).
+    """
+    return [dim.value for dim, score in scores.items() if score >= HIGH_DIMENSION_SCORE]
+
+
+def _apply_library(
+    engine_strategies: List[Any],
+    inputs: "strategy_library.StrategyLibraryInputs",
+) -> List[PlanStrategy]:
+    """Overlay the section 4.10 library flags onto the engine's ranked starter strategies.
+
+    The library REORDERS / FILTERS / APPENDS only (it never changes a score): promoted titles
+    float to the front (keeping their relative order), suppressed titles are dropped, each
+    surviving starter carries its library_item_id (so the app can remove it), and the
+    cross-context matches are appended last with their "Also worked in [chapter]" tag. The
+    engine already produced the dimension-matched starter order; this is the section 4.4 step 7
+    promotion / suppression / cross-context layer the engine left as the Task 9 hook. When the
+    library has no inputs (a fresh recipient or the 0014 table not applied), the engine's
+    starter order is returned unchanged.
+    """
+    promoted = set(inputs.promoted_titles)
+    suppressed = set(inputs.suppressed_titles)
+
+    surviving = [s for s in engine_strategies if s.title not in suppressed]
+    promoted_first = [s for s in surviving if s.title in promoted]
+    remaining = [s for s in surviving if s.title not in promoted]
+    ordered = promoted_first + remaining
+
+    plan_strategies = [
+        PlanStrategy(
+            title=s.title,
+            detail=s.body,
+            library_item_id=inputs.item_id_by_title.get(s.title),
+            also_worked_in_chapter=s.cross_context_chapter,
+        )
+        for s in ordered
+    ]
+
+    # Append the cross-context strategies, each labelled "Also worked in [chapter]" (section
+    # 4.10). They carry both the richer also_worked_in tag and the scalar source code, plus the
+    # saved item id so the app can dismiss the surfacing per chapter.
+    for cc in inputs.cross_context:
+        plan_strategies.append(
+            PlanStrategy(
+                title=cc.title,
+                detail=cc.body,
+                library_item_id=cc.library_item_id,
+                also_worked_in=[
+                    AlsoWorkedIn(
+                        chapter=cc.source_chapter,
+                        label=strategy_library.cross_context_label(cc.source_chapter),
+                    )
+                ],
+                also_worked_in_chapter=cc.source_chapter,
+            )
+        )
+    return plan_strategies
+
+
+# ---------------------------------------------------------------------------
 # persistence (step 8)
 # ---------------------------------------------------------------------------
 
@@ -402,6 +503,7 @@ def _store_activity_record(
     context_note: Optional[str],
     scheduled_pulse_at: datetime,
     result: EngineResult,
+    plan_strategies: List[PlanStrategy],
 ) -> Dict[str, Any]:
     """Insert the activity_record and return the stored row (write confirmed).
 
@@ -410,6 +512,11 @@ def _store_activity_record(
     user_id == auth.uid(). If the insert returns no representation, the row is
     read back under RLS so the plan is only ever returned for a row that exists
     (section 4.4 step 8: confirm the write before returning).
+
+    plan_strategies is the library-adjusted ranked list (promoted first, suppressed
+    excluded, cross-context appended); the stored strategies JSON is this list, so a
+    stored-plan re-read returns the same order the POST returned (the library item ids are
+    a live concern and are NOT stored, the app re-fetches them on the live plan).
     """
     client = get_anon_client(user.access_token)
     insert_row = {
@@ -430,7 +537,7 @@ def _store_activity_record(
         "total": result.total,
         "tier": result.tier.value,
         "today_flags": list(today_flags),
-        "strategies": _strategies_json(result),
+        "strategies": _strategies_json(plan_strategies),
         "context_note": context_note,
         "scheduled_pulse_at": scheduled_pulse_at.isoformat(),
     }
@@ -454,15 +561,21 @@ def _store_activity_record(
     return confirmed
 
 
-def _strategies_json(result: EngineResult) -> List[Dict[str, Any]]:
-    """The ranked strategies as the stored/returned JSON array."""
+def _strategies_json(plan_strategies: List[PlanStrategy]) -> List[Dict[str, Any]]:
+    """The library-adjusted ranked strategies as the stored JSON array.
+
+    Stores the title, detail, and the single also_worked_in_chapter source code (the
+    activity_record's stored shape, {title, detail, also_worked_in_chapter}); library_item_id
+    and the richer also_worked_in list are LIVE concerns the app re-fetches on the live plan,
+    not persisted (a stored re-read returns the order without the live remove ids).
+    """
     return [
         {
             "title": s.title,
-            "detail": s.body,
-            "also_worked_in_chapter": s.cross_context_chapter,
+            "detail": s.detail,
+            "also_worked_in_chapter": s.also_worked_in_chapter,
         }
-        for s in result.strategies
+        for s in plan_strategies
     ]
 
 
@@ -477,8 +590,13 @@ def _to_plan(
     chapter: str,
     activity_code: str,
     scheduled_pulse_at: datetime,
+    plan_strategies: List[PlanStrategy],
 ) -> PreparationPlan:
-    """Shape the stored row + engine result into the PreparationPlan the app renders."""
+    """Shape the stored row + engine result into the PreparationPlan the app renders.
+
+    plan_strategies is the library-adjusted ranked list (built once in prepare_plan and
+    stored), so the returned plan, the stored JSON, and the auto-save all see the same list.
+    """
     return PreparationPlan(
         activity_id=str(stored.get("id")),
         chapter=chapter,
@@ -492,14 +610,7 @@ def _to_plan(
         ),
         total=result.total,
         tier=Tier(result.tier),
-        strategies=[
-            PlanStrategy(
-                title=s.title,
-                detail=s.body,
-                also_worked_in_chapter=s.cross_context_chapter,
-            )
-            for s in result.strategies
-        ],
+        strategies=plan_strategies,
         dimension_explanations=DimensionExplanations(
             temporal=result.dimension_explanations[Dimension.TEMPORAL.value],
             sensory=result.dimension_explanations[Dimension.SENSORY.value],

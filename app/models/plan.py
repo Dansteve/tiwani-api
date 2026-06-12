@@ -52,17 +52,43 @@ class DimensionScores(BaseModel):
     human: int = Field(..., ge=1, le=5)
 
 
+class AlsoWorkedIn(BaseModel):
+    """One "Also worked in [chapter]" tag on a cross-context strategy (section 4.10).
+
+    chapter is the source chapter code (the chapter the strategy succeeded in); label is
+    the ready-to-render "Also worked in [display name]" text. A cross-context strategy
+    carries one entry (the chapter it was promoted from); the list shape lets the app render
+    several labels if a strategy ever surfaces from more than one source chapter.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    chapter: str
+    label: str
+
+
 class PlanStrategy(BaseModel):
     """One strategy in the plan's ranked list (section 4.4 step 7 output).
 
     title + detail are the seeded strategy text (the source carries flat phrases,
-    so title and detail may be the same line). also_worked_in_chapter is set only
-    for a cross-context strategy appended by the Strategy Library (Task 9), shown
-    by the app as "Also worked in [chapter]"; null for a starter strategy.
+    so title and detail may be the same line).
+
+    Strategy Library fields (Task 9, Product.md section 4.10):
+      - library_item_id: the saved strategy_library_item id for THIS recipient + scenario,
+        so the app can drive the remove action (swipe-to-remove -> suppress after 3) and the
+        re-allow. Null when the library has not saved it yet (e.g. the 0014 table is not
+        applied), in which case the app simply omits the remove control.
+      - also_worked_in: the cross-context "Also worked in [chapter]" tags for a strategy
+        surfaced from another chapter; empty for a starter strategy of this scenario.
+      - also_worked_in_chapter: the single source-chapter code, kept for the lighter mirror
+        and the stored-plan read (the activity_record stores this scalar); null for a starter
+        strategy. also_worked_in is the richer Task 9 field; this stays for back-compat.
     """
 
     title: str
     detail: str
+    library_item_id: Optional[str] = None
+    also_worked_in: List[AlsoWorkedIn] = Field(default_factory=list)
     also_worked_in_chapter: Optional[str] = None
 
 
