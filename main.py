@@ -2,7 +2,9 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3
+from app.routes import (
+    profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3, village,
+)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -56,6 +58,14 @@ app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
 # OTHER v3 route rejects a closed account with 410 (the soft-delete block in
 # get_current_user). Registered under /api/v3 behind the current-user dependency.
 app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (export & delete)"])
+# The Village Delegation Hub (Docs/FeatureDecisions.md): a closed need -> claim -> confirm
+# -> done / dropped follow-through loop for a Coordinator's village of helpers, riding the
+# recipient_membership substrate (migration 0015). A need belongs to ONE recipient; a member
+# sees the need + logistics only (MINIMUM VISIBILITY), the exact where/contact is per-claim,
+# claims are atomic first-wins, and per-recipient consent gates a broadcast (Art. 9). All
+# routes require auth and are RLS-scoped; the schema + RPCs are migration 0017 (PENDING
+# OWNER APPLY). The user-facing copy is GOVERNED (psychiatrist sign-off, Task 12).
+app.include_router(village.router, prefix="/api/v3", tags=["v3 Village Hub"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.
