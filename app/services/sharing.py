@@ -1,0 +1,583 @@
+"""Shared-Child sharing data service (v3).
+
+The layer between the sharing routes and Supabase for the Shared-Child MVP (Docs/
+FeatureDecisions.md, the Shared-Child REFINE entry; HardRules/Api/Modules/Sharing.md).
+It sits on the 0015 membership substrate (recipient_membership + recipient_invite +
+is_child_member + the atomic owner-gated mint / first-wins redeem RPCs) and the 0016
+feature functions (get_recipient_card_for_member, record_share_consent,
+share_recipient_invite), and adds the feature behaviour:
+
+  - INVITE (owner only): invite_viewer(user, recipient_id, email, role, subject_kind).
+    Verifies the caller OWNS the recipient (resolve_child_id under RLS), builds the
+    GOVERNED consent text (app/engines/sharing/copy.py), generates a hard-to-guess token
+    (secrets.token_urlsafe, the card precedent), and calls share_recipient_invite, which
+    records the consent atomically and mints the email-bound invite (and BLOCKS an adult
+    share with no recorded adult consent). Returns the token + expiry + the governed copy.
+
+  - RECORD ADULT CONSENT (owner only): record_adult_consent(user, recipient_id). The
+    adult-share precondition: records the governed adult consent text so a later adult
+    share is unblocked (refinement 5).
+
+  - REDEEM (the invited person): redeem_invite(user, token). Calls redeem_recipient_invite
+    (atomic, email-bound, first-wins) and returns which recipient was linked + the first
+    name + the governed linked-state copy. A bad token is a friendly error mapped at the
+    route.
+
+  - ROSTER (any active member): roster(user, recipient_id). The visible "who can see
+    [name]'s card" list (refinement 6): the active memberships + the pending invites,
+    read under RLS (the substrate's member-reads-select / owner-reads-invites policies),
+    each as a RosterEntry. First-name-only; the role CODE is returned, never a role label
+    as user copy.
+
+  - REVOKE (owner only): revoke_access(user, recipient_id, membership_id) and
+    revoke_invite(user, recipient_id, invite_id). Instant soft-revoke (set revoked_at via
+    the substrate's owner-only update policy); RLS stops resolving on the next request and
+    the audit row is retained (refinement 6).
+
+  - SHARED WITH ME (the viewer): shared_with_me(user). Every recipient shared WITH the
+    caller (their non-owner active memberships), each with the recipient first name + the
+    governed linked-state copy, the entry to read the card.
+
+  - READ THE CARD (any active member): read_shared_card(user, recipient_id). The
+    visibility CEILING (refinement 1): calls get_recipient_card_for_member, which returns
+    the recipient's latest live Continuity Card content to an active member ONLY (gated on
+    is_child_member in SQL). The viewer NEVER reaches child_profile / lci_snapshot /
+    alert_record / pulse_record. None when there is no live card (route -> 404).
+
+User scoping and RLS (HardRules/Api/Modules/Auth.md, Models.md): every path runs through
+get_anon_client(user.access_token) so Row Level Security scopes every read and the
+SECURITY DEFINER RPCs re-derive the caller from auth.uid() (never a client-passed id).
+Writes are owner-only at the DB (the substrate's owner-gated RPCs + the owner-only update
+policy) AND re-checked in the service layer (we never trust the UI). The token is the
+link's only secret, generated with secrets.token_urlsafe.
+"""
+
+from __future__ import annotations
+
+import secrets
+from typing import Any, Dict, List, Optional
+
+from app.auth import AuthedUser
+from app.db import get_anon_client
+from app.engines.sharing import copy as sharing_copy
+from app.models.card import CardContent
+from app.models.sharing import (
+    ConsentRecorded,
+    InviteCreated,
+    RedeemResult,
+    RevokeResult,
+    Roster,
+    RosterEntry,
+    RosterStatus,
+    SharedCard,
+    SharedRecipient,
+    SharedWithMe,
+    ShareRole,
+    SubjectKind,
+)
+from app.services.profile import (
+    ChildNotFoundError,
+    _first,
+    _rows,
+    get_child_by_id,
+    resolve_child_id,
+)
+
+MEMBERSHIP_TABLE = "recipient_membership"
+INVITE_TABLE = "recipient_invite"
+
+SHARE_INVITE_FN = "share_recipient_invite"
+REDEEM_INVITE_FN = "redeem_recipient_invite"
+RECORD_CONSENT_FN = "record_share_consent"
+GET_CARD_FOR_MEMBER_FN = "get_recipient_card_for_member"
+
+# The number of random bytes behind the invite token. token_urlsafe(32) yields a ~43
+# char URL-safe string with 256 bits of entropy: not guessable, the link's one secret
+# (the same strength as the Continuity Card share token).
+INVITE_TOKEN_BYTES = 32
+
+
+class RecipientNotOwnedError(Exception):
+    """Raised when the recipient to act on is not one the caller OWNS (route -> 404/403).
+
+    RLS plus the explicit ownership read make another user's recipient invisible, so a
+    forged or someone-else's recipient_id reads as not-owned here; we do not confirm
+    whether it exists.
+    """
+
+
+class AdultConsentRequiredError(Exception):
+    """Raised when an ADULT-recipient share is attempted with no recorded adult consent.
+
+    The MVP adult block (refinement 5): the api refuses to mint an adult share until the
+    adult has recorded their own consent. The route maps this to a calm 409 with the
+    governed capacity-framed copy.
+    """
+
+
+class InviteRedeemError(Exception):
+    """Raised when an invite token cannot be redeemed (route -> friendly 4xx).
+
+    Wraps the redeem RPC's failure (unknown / expired / already-used / revoked / a
+    different email). The reason string is for logging, not shown raw to the user.
+    """
+
+
+# ---------------------------------------------------------------------------
+# owner ownership (the write gate, re-checked in the service, never trusting the UI)
+# ---------------------------------------------------------------------------
+
+
+def _require_owned_recipient(user: AuthedUser, recipient_id: str) -> Dict[str, Any]:
+    """Return the caller's OWN recipient row, or raise RecipientNotOwnedError.
+
+    Ownership is the creator relationship (child_profile.user_id == auth.uid()), read via
+    resolve_child_id -> get_child_by_id under RLS. This is the service-layer write gate:
+    the substrate RPCs ALSO check owner membership at the DB (defence in depth), but we
+    refuse early here so a non-owner never reaches the RPC. A recipient the caller does
+    not own reads as missing (RLS) and raises (the route maps to 404).
+    """
+    try:
+        resolve_child_id(user, recipient_id)
+    except ChildNotFoundError as exc:
+        raise RecipientNotOwnedError("Recipient not found") from exc
+    owned = get_child_by_id(user, recipient_id)
+    if owned is None:
+        raise RecipientNotOwnedError("Recipient not found")
+    return owned
+
+
+def _first_name(name: Optional[str]) -> str:
+    """The recipient's first name (the only identifier the sharing surface uses)."""
+    token = (name or "").strip().split()
+    return token[0] if token else ""
+
+
+# ---------------------------------------------------------------------------
+# invite + consent (owner only)
+# ---------------------------------------------------------------------------
+
+
+def invite_viewer(
+    user: AuthedUser,
+    *,
+    recipient_id: str,
+    email: str,
+    role: ShareRole = ShareRole.VIEWER,
+    subject_kind: SubjectKind = SubjectKind.CHILD,
+) -> InviteCreated:
+    """Invite someone to see one of the caller's recipients' Continuity Card (owner only).
+
+    Steps:
+      1. verify the caller OWNS the recipient (RLS-scoped). Not owned -> 404.
+      2. build the GOVERNED consent text for this recipient + subject kind (the api owns
+         the wording; the client never authors consent copy).
+      3. generate the opaque email-bound token (secrets.token_urlsafe).
+      4. call share_recipient_invite (SECURITY DEFINER): for a CHILD it records the consent
+         atomically THEN mints; for an ADULT it mints ONLY if a recorded adult consent
+         already exists, else it raises (-> AdultConsentRequiredError -> 409).
+      5. return the invite id + token + expiry + the governed invite copy_key + the recorded
+         consent_text, so the app builds the share link and shows the warm invite line.
+
+    The expiry is computed by the RPC (now() + ttl); we read the minted invite back under
+    RLS (the owner can select their recipient's invites) to return the canonical
+    expires_at, so the app shows the true link lifetime.
+    """
+    owned = _require_owned_recipient(user, recipient_id)
+    first_name = _first_name(owned.get("name"))
+
+    consent_text = sharing_copy.consent_text(first_name, subject_kind=subject_kind.value)
+    consent_text_arg = consent_text if subject_kind == SubjectKind.CHILD else None
+
+    token = secrets.token_urlsafe(INVITE_TOKEN_BYTES)
+
+    client = get_anon_client(user.access_token)
+    try:
+        response = client.rpc(
+            SHARE_INVITE_FN,
+            {
+                "p_child_id": recipient_id,
+                "p_email": email,
+                "p_role": role.value,
+                "p_token": token,
+                "p_subject_kind": subject_kind.value,
+                "p_consent_text": consent_text_arg,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        # The adult-block RPC raises P0001 "adult recipient sharing requires recorded
+        # consent first"; surface it as the typed AdultConsentRequiredError (the route
+        # maps it to the calm 409). Any other RPC failure re-raises unchanged.
+        if _is_adult_consent_block(exc):
+            raise AdultConsentRequiredError(
+                "Adult recipient sharing requires recorded consent first"
+            ) from exc
+        raise
+
+    invite_id = _rpc_scalar(response)
+
+    invite_row = _read_owned_invite(user, recipient_id, invite_id)
+    expires_at = (invite_row or {}).get("expires_at")
+
+    return InviteCreated(
+        invite_id=invite_id,
+        token=token,
+        role=role,
+        expires_at=expires_at,
+        copy_key=sharing_copy.INVITE_COPY_KEY,
+        consent_text=consent_text,
+    )
+
+
+def record_adult_consent(user: AuthedUser, *, recipient_id: str) -> ConsentRecorded:
+    """Record an ADULT recipient's own consent so a later adult share is unblocked.
+
+    The adult-share precondition (refinement 5). Verifies ownership (the owning Coordinator
+    records it on the adult's behalf at the adult's direction; the app gates this on the
+    adult's confirmation), builds the governed adult consent text, and calls
+    record_share_consent (SECURITY DEFINER, owner-checked). Returns the consent id + the
+    governed copy. After this, invite_viewer(..., subject_kind=adult) for the recipient
+    will mint.
+    """
+    owned = _require_owned_recipient(user, recipient_id)
+    first_name = _first_name(owned.get("name"))
+    consent_text = sharing_copy.consent_text(first_name, subject_kind=SubjectKind.ADULT.value)
+
+    client = get_anon_client(user.access_token)
+    response = client.rpc(
+        RECORD_CONSENT_FN,
+        {
+            "p_child_id": recipient_id,
+            "p_subject_kind": SubjectKind.ADULT.value,
+            "p_consent_text": consent_text,
+        },
+    ).execute()
+    consent_id = _rpc_scalar(response)
+
+    return ConsentRecorded(
+        consent_id=consent_id,
+        copy_key=sharing_copy.consent_copy_key(SubjectKind.ADULT.value),
+        consent_text=consent_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# redeem (the invited person)
+# ---------------------------------------------------------------------------
+
+
+def redeem_invite(user: AuthedUser, *, token: str) -> RedeemResult:
+    """Redeem an invite token; return which recipient was linked + the governed copy.
+
+    Calls redeem_recipient_invite (SECURITY DEFINER, atomic, email-bound, first-wins). On
+    success it returns the new membership id; we then read the membership back under RLS
+    (the now-active member can select the roster of that recipient) to learn the
+    recipient_id and the role, and read the recipient's FIRST name through the same capped
+    member path (the shared card's first name) so the app can land the person on the card.
+    A bad token (unknown / expired / used / revoked / wrong email) raises -> InviteRedeemError
+    (the route maps to a friendly 4xx).
+    """
+    client = get_anon_client(user.access_token)
+    try:
+        response = client.rpc(REDEEM_INVITE_FN, {"p_token": token}).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise InviteRedeemError(str(exc)) from exc
+
+    membership_id = _rpc_scalar(response)
+    if not membership_id:
+        raise InviteRedeemError("Invite could not be redeemed")
+
+    membership = _read_membership_by_id(user, membership_id)
+    if membership is None:
+        # The membership exists (the RPC returned its id) but the read-back found nothing;
+        # treat as a redeem failure rather than returning a half-result.
+        raise InviteRedeemError("Invite redeemed but membership is not readable")
+
+    recipient_id = membership["recipient_id"]
+    role = _safe_role(membership.get("role"))
+    first_name = _shared_recipient_first_name(user, recipient_id)
+
+    return RedeemResult(
+        recipient_id=recipient_id,
+        recipient_first_name=first_name,
+        role=role,
+        copy_key=sharing_copy.LINKED_COPY_KEY,
+    )
+
+
+# ---------------------------------------------------------------------------
+# roster (any active member) + revoke (owner only)
+# ---------------------------------------------------------------------------
+
+
+def roster(user: AuthedUser, *, recipient_id: str) -> Roster:
+    """The visible 'who can see [name]'s card' roster for a recipient (refinement 6).
+
+    Any ACTIVE member may read it (the substrate's member-reads-select policy on
+    recipient_membership; the owner-reads policy on recipient_invite). It lists the active
+    NON-owner memberships (the people the owner shared WITH; the owner themselves is the
+    creator, not a roster guest) and the PENDING invites (minted, not yet redeemed, not
+    expired, not revoked), each as a RosterEntry with the role CODE (never a role label as
+    copy) and the relevant timestamps. The recipient first name + the governed title /
+    empty copy keys frame the list. Ownership is verified first so a non-owner member sees
+    a roster scoped to a recipient they belong to but cannot leak another recipient's.
+    """
+    owned = _require_owned_recipient(user, recipient_id)
+    first_name = _first_name(owned.get("name"))
+
+    client = get_anon_client(user.access_token)
+
+    membership_rows = _rows(
+        client.table(MEMBERSHIP_TABLE)
+        .select("id, user_id, role, granted_at, revoked_at")
+        .eq("recipient_id", recipient_id)
+        .is_("revoked_at", "null")
+        .neq("role", "owner")
+        .order("granted_at", desc=True)
+        .execute()
+    )
+    invite_rows = _rows(
+        client.table(INVITE_TABLE)
+        .select("id, email, role, created_at, expires_at, redeemed_at, revoked_at")
+        .eq("recipient_id", recipient_id)
+        .is_("redeemed_at", "null")
+        .is_("revoked_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    entries: List[RosterEntry] = []
+    for m in membership_rows:
+        entries.append(
+            RosterEntry(
+                id=m["id"],
+                kind=RosterStatus.ACTIVE,
+                role=_safe_role(m.get("role")),
+                status=RosterStatus.ACTIVE,
+                granted_at=m.get("granted_at"),
+            )
+        )
+    for inv in invite_rows:
+        entries.append(
+            RosterEntry(
+                id=inv["id"],
+                kind=RosterStatus.PENDING,
+                email=inv.get("email"),
+                role=_safe_role(inv.get("role")),
+                status=RosterStatus.PENDING,
+                invited_at=inv.get("created_at"),
+                expires_at=inv.get("expires_at"),
+            )
+        )
+
+    return Roster(
+        recipient_id=recipient_id,
+        recipient_first_name=first_name,
+        title_copy_key=sharing_copy.ROSTER_TITLE_COPY_KEY,
+        empty_copy_key=sharing_copy.ROSTER_EMPTY_COPY_KEY,
+        entries=entries,
+    )
+
+
+def revoke_access(user: AuthedUser, *, recipient_id: str, membership_id: str) -> RevokeResult:
+    """Instantly revoke a person's access to a recipient's card (owner only, refinement 6).
+
+    Soft-revoke: set revoked_at on the membership via the substrate's OWNER-ONLY update
+    policy (the policy's using/with-check both require is_child_member at the owner
+    threshold), so only an owner of THIS recipient can revoke, and the audit row is kept.
+    RLS stops resolving for the revoked member on the very next request (is_child_member
+    requires revoked_at is null). Ownership is verified first (defence in depth). A
+    membership that is not this recipient's, or not found, leaves revoked False -> the route
+    maps that to 404. An owner row is never revoked through here (we never target role=owner).
+    """
+    # Ownership gate: raises RecipientNotOwnedError (route -> 404) if not the caller's.
+    _require_owned_recipient(user, recipient_id)
+
+    client = get_anon_client(user.access_token)
+    updated = _first(
+        client.table(MEMBERSHIP_TABLE)
+        .update({"revoked_at": _now_iso()})
+        .eq("id", membership_id)
+        .eq("recipient_id", recipient_id)
+        .neq("role", "owner")
+        .is_("revoked_at", "null")
+        .execute()
+    )
+    revoked = updated is not None
+    return RevokeResult(revoked=revoked, copy_key=sharing_copy.REVOKED_COPY_KEY)
+
+
+def revoke_invite(user: AuthedUser, *, recipient_id: str, invite_id: str) -> RevokeResult:
+    """Instantly revoke a PENDING invite before it is redeemed (owner only, refinement 6).
+
+    Soft-revoke: set revoked_at on the invite via the substrate's owner-only update policy
+    on recipient_invite (owner-gated using/with-check). After this the redeem RPC refuses
+    the token (it re-checks revoked_at inside the lock). Ownership is verified first. An
+    invite that is not this recipient's, already redeemed, or not found leaves revoked
+    False -> the route maps that to 404.
+    """
+    self_owned = _require_owned_recipient(user, recipient_id)  # noqa: F841 (gate only)
+    client = get_anon_client(user.access_token)
+    updated = _first(
+        client.table(INVITE_TABLE)
+        .update({"revoked_at": _now_iso()})
+        .eq("id", invite_id)
+        .eq("recipient_id", recipient_id)
+        .is_("redeemed_at", "null")
+        .is_("revoked_at", "null")
+        .execute()
+    )
+    revoked = updated is not None
+    return RevokeResult(revoked=revoked, copy_key=sharing_copy.REVOKED_COPY_KEY)
+
+
+# ---------------------------------------------------------------------------
+# the viewer side: list shared-with-me + read the card (the CEILING)
+# ---------------------------------------------------------------------------
+
+
+def shared_with_me(user: AuthedUser) -> SharedWithMe:
+    """Every recipient shared WITH the caller (their non-owner active memberships).
+
+    Reads the caller's OWN active, non-owner memberships under RLS (the member-reads-select
+    policy returns the caller's row for each recipient they belong to). For each, it reads
+    the recipient's FIRST name through the capped member card path (so a viewer never
+    learns more than the first name from this list), and attaches the governed linked-state
+    copy_key. This is the viewer's entry list to the shared card.
+    """
+    client = get_anon_client(user.access_token)
+    rows = _rows(
+        client.table(MEMBERSHIP_TABLE)
+        .select("recipient_id, role, granted_at")
+        .eq("user_id", user.id)
+        .neq("role", "owner")
+        .is_("revoked_at", "null")
+        .order("granted_at", desc=True)
+        .execute()
+    )
+    recipients: List[SharedRecipient] = []
+    for row in rows:
+        recipient_id = row["recipient_id"]
+        first_name = _shared_recipient_first_name(user, recipient_id)
+        recipients.append(
+            SharedRecipient(
+                recipient_id=recipient_id,
+                recipient_first_name=first_name,
+                role=_safe_role(row.get("role")),
+                copy_key=sharing_copy.LINKED_COPY_KEY,
+            )
+        )
+    return SharedWithMe(recipients=recipients)
+
+
+def read_shared_card(user: AuthedUser, *, recipient_id: str) -> Optional[SharedCard]:
+    """The viewer's CAPPED read of a shared recipient's Continuity Card (refinement 1).
+
+    The visibility CEILING: calls get_recipient_card_for_member (SECURITY DEFINER), which
+    returns the recipient's LATEST live, non-revoked Continuity Card content as jsonb ONLY
+    when the caller is an ACTIVE member of that recipient (is_child_member at the viewer
+    threshold, evaluated in SQL), and NOTHING ELSE. The viewer never reaches child_profile
+    / lci_snapshot / alert_record / pulse_record. Returns the SAFE CardContent (the same
+    first-name-only, non-clinical shape a helper sees) wrapped with the governed
+    linked-state copy_key. None when the caller is not a member OR there is no live card
+    (the route maps None to 404, never the profile).
+    """
+    client = get_anon_client(user.access_token)
+    response = client.rpc(GET_CARD_FOR_MEMBER_FN, {"p_child_id": recipient_id}).execute()
+    data = getattr(response, "data", None)
+    if not data:
+        return None
+    content = CardContent.model_validate(data)
+    return SharedCard(
+        recipient_id=recipient_id,
+        copy_key=sharing_copy.LINKED_COPY_KEY,
+        content=content,
+    )
+
+
+# ---------------------------------------------------------------------------
+# small read helpers
+# ---------------------------------------------------------------------------
+
+
+def _shared_recipient_first_name(user: AuthedUser, recipient_id: str) -> str:
+    """The FIRST name of a recipient shared with the caller, via the capped card read.
+
+    A viewer cannot read child_profile (owner-only RLS), so the only place a viewer can
+    learn the recipient's name is the SAFE card content (first name only). Read it through
+    get_recipient_card_for_member and take child_first_name; "" if there is no live card
+    yet (the app then shows a neutral label). This keeps the viewer strictly at the
+    visibility ceiling even for the name.
+    """
+    card = read_shared_card(user, recipient_id=recipient_id)
+    if card is None:
+        return ""
+    return card.content.child_first_name or ""
+
+
+def _read_owned_invite(
+    user: AuthedUser, recipient_id: str, invite_id: str
+) -> Optional[Dict[str, Any]]:
+    """Read a minted invite back under RLS (owner-reads-invites), for the canonical expiry."""
+    client = get_anon_client(user.access_token)
+    return _first(
+        client.table(INVITE_TABLE)
+        .select("id, role, expires_at, created_at")
+        .eq("id", invite_id)
+        .eq("recipient_id", recipient_id)
+        .limit(1)
+        .execute()
+    )
+
+
+def _read_membership_by_id(user: AuthedUser, membership_id: str) -> Optional[Dict[str, Any]]:
+    """Read the caller's membership row by id under RLS (after a redeem)."""
+    client = get_anon_client(user.access_token)
+    return _first(
+        client.table(MEMBERSHIP_TABLE)
+        .select("id, recipient_id, role")
+        .eq("id", membership_id)
+        .eq("user_id", user.id)
+        .limit(1)
+        .execute()
+    )
+
+
+def _safe_role(value: Any) -> ShareRole:
+    """Coerce a stored role code to a ShareRole, defaulting to viewer for an owner/unknown.
+
+    The roster lists non-owner rows, so a stored 'owner' should not appear; if it ever
+    does (or an unexpected value), fall back to viewer for the user-facing CODE rather than
+    erroring. viewer/editor pass through.
+    """
+    if value in (ShareRole.VIEWER.value, ShareRole.EDITOR.value):
+        return ShareRole(value)
+    return ShareRole.VIEWER
+
+
+def _rpc_scalar(response: Any) -> Any:
+    """The scalar a SECURITY DEFINER RPC returns (uuid id), from the client response.
+
+    The supabase client returns the function result in .data; for a scalar-returning
+    plpgsql/sql function it is the value directly (a string uuid). Normalised here so the
+    callers read one shape.
+    """
+    return getattr(response, "data", None)
+
+
+def _is_adult_consent_block(exc: Exception) -> bool:
+    """True if the RPC error is the adult-consent block (P0001, the known message).
+
+    The share_recipient_invite RPC raises 'adult recipient sharing requires recorded
+    consent first' (errcode P0001) when an adult share has no recorded adult consent. The
+    supabase client wraps the Postgres error; match on the stable message text (the
+    errcode is not always surfaced uniformly across client versions).
+    """
+    return "adult recipient sharing requires recorded consent" in str(exc).lower()
+
+
+def _now_iso() -> str:
+    """The current UTC instant as an ISO string (for the revoked_at stamp)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
