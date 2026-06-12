@@ -117,6 +117,10 @@ COPY: Dict[str, str] = {
     # --- state-change conflicts (a need moved on before this action). Governed so the raw
     #     Postgres RPC message (the 0017 P0001 RAISE text) never reaches the user; calm,
     #     warm, no role labels. The claim-taken conflict reuses need.claim_taken above. ----
+    "need.conflict.consent_required": (
+        "Before asking {name}'s village for a hand, take a moment to agree to sharing the "
+        "task details with them. You can do that first, then post your ask."
+    ),
     "need.conflict.post": (
         "This couldn't be posted just now. Please try again in a moment."
     ),

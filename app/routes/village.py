@@ -146,10 +146,9 @@ def post_need(
             ends_at=_isoformat(payload.ends_at),
         )
     except village_service.ConsentRequiredError as exc:
-        raise _conflict(
-            "Record consent to share this recipient's information with the village before "
-            "posting a need"
-        ) from exc
+        # GOVERNED, guarded copy (mirrors the sharing / subscription routes): the raw
+        # Postgres consent-gate RAISE text never reaches the user, only the warm key.
+        raise _conflict(render_copy("need.conflict.consent_required")) from exc
     except village_service.NotOwnerError as exc:
         raise _not_allowed("Only the family owner can post a need") from exc
     except village_service.NotMemberError as exc:

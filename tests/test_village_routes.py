@@ -424,6 +424,10 @@ def test_post_need_consent_required_is_409(authed, monkeypatch):
     monkeypatch.setattr(village_routes.village_service, "create_need", boom)
     r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": "School run"})
     assert r.status_code == 409
+    # N3: the route returns GOVERNED, guarded copy, never the raw Postgres RPC message.
+    detail = r.json()["detail"]
+    assert "village consent not recorded" not in detail  # the raw RPC text is never leaked
+    assert detail == village_routes.render_copy("need.conflict.consent_required")
 
 
 def test_post_need_not_owner_is_403(authed, monkeypatch):
