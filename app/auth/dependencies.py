@@ -16,16 +16,19 @@ cross-user access attempt is 404 and is enforced downstream by RLS plus
 user-scoped queries, not here (this dependency only authenticates).
 
 Account closure (soft-delete): a Coordinator can CLOSE their account, which sets
-user_profile.deleted_at (the data is retained, not hard-deleted; migration 0013).
-A closed account must be unable to read or write. get_current_user is the
-chokepoint that enforces this: after the token resolves to a user, it reads that
-user's own user_profile.deleted_at under RLS and, if it is set, raises 410 Gone.
-Because every v3 data route depends on get_current_user, a soft-deleted account is
-blocked everywhere at once (fail-safe: a new route gets the block for free). The
-two SELF-SERVICE account routes (GET /me/export, POST /me/delete) must still work
-for a user acting on their own account, so they depend on
-get_current_user_allow_deleted instead, which authenticates WITHOUT the block (so
-the export reads up to the moment of closure and the delete stays idempotent).
+user_profile.deleted_at (the data is retained for a 90-day recovery window, not
+hard-deleted; migration 0013). A closed account must be unable to read or write.
+get_current_user is the chokepoint that enforces this: after the token resolves to
+a user, it reads that user's own user_profile.deleted_at under RLS and, if it is
+set, raises 410 Gone. Because every v3 data route depends on get_current_user, a
+soft-deleted account is blocked everywhere at once (fail-safe: a new route gets the
+block for free). The SELF-SERVICE account routes (GET /me/export, POST /me/delete,
+GET /me/account-status, POST /me/reactivate) must still work for a user acting on
+their own closed account, so they depend on get_current_user_allow_deleted instead,
+which authenticates WITHOUT the block (so the export reads up to the moment of
+closure, the delete stays idempotent, and a soft-deleted caller can check their
+status and REACTIVATE within the 90-day window, which clears deleted_at and lifts
+the block).
 
 Usage on a normal data route (blocked if the account is closed):
 

@@ -3,15 +3,30 @@
 The service's only I/O is the RLS-scoped Supabase anon client, monkeypatched to the
 FakeClient in tests/fakes_supabase (same seam as test_profile_service), so the suite never
 reaches a live Supabase. These pin: the soft-delete state read (is_account_deleted), the
-export gathering the caller's own rows scoped by user_id across every user-owned table, and
-the soft-delete write setting user_profile.deleted_at on the caller's own row.
+export gathering the caller's own rows scoped by user_id across every user-owned table, the
+soft-delete write setting user_profile.deleted_at on the caller's own row AND revoking the
+caller's active cards, the account-status read (the computed 90-day recovery window), and the
+reactivation write (clearing deleted_at inside the window, refusing past it).
 """
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 import app.services.account as svc
 from app.auth import AuthedUser
 from tests.fakes_supabase import FakeClient, FakeResponse
 
 USER = AuthedUser(id="u-1", email="ada@example.com", access_token="tok-abc")
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _ago(days: float) -> str:
+    """An ISO timestamp `days` in the past (for the recovery-window math)."""
+    return _iso(datetime.now(timezone.utc) - timedelta(days=days))
 
 
 def _patch_anon(monkeypatch, anon: FakeClient):
@@ -132,7 +147,14 @@ def test_export_returns_empty_lists_when_user_has_no_records(monkeypatch):
 
 def test_soft_delete_sets_deleted_at_on_callers_own_row(monkeypatch):
     updated = {"id": "u-1", "deleted_at": "2026-06-12T10:00:00+00:00"}
-    anon = FakeClient({("user_profile", "update"): FakeResponse([updated])})
+    anon = FakeClient(
+        {
+            ("user_profile", "update"): FakeResponse([updated]),
+            # soft_delete also revokes the caller's active cards (the same revoked_at marker
+            # the public token read checks); script the bulk card update.
+            ("card_record", "update"): FakeResponse([]),
+        }
+    )
     captured = _patch_anon(monkeypatch, anon)
 
     result = svc.soft_delete_account(USER)
@@ -140,20 +162,159 @@ def test_soft_delete_sets_deleted_at_on_callers_own_row(monkeypatch):
     assert result["deleted"] is True
     assert result["deleted_at"] == "2026-06-12T10:00:00+00:00"
     assert captured["anon_token"] == "tok-abc"
-    call = anon.calls[0]
-    assert call["op"] == "update"
+    profile_update = next(
+        c for c in anon.calls if c["table"] == "user_profile" and c["op"] == "update"
+    )
     # The write sets deleted_at and is scoped to the caller's own row (cannot close another).
-    assert "deleted_at" in call["payload"]
-    assert call["payload"]["deleted_at"] is not None
-    assert ("id", "u-1") in call["filters"]
+    assert "deleted_at" in profile_update["payload"]
+    assert profile_update["payload"]["deleted_at"] is not None
+    assert ("id", "u-1") in profile_update["filters"]
 
 
 def test_soft_delete_is_idempotent_returns_confirmation_even_if_no_row_echoed(monkeypatch):
     # Some PostgREST configs return no representation on update; the service still confirms
     # (it falls back to the timestamp it sent), so a repeat/echo-less delete still succeeds.
-    anon = FakeClient({("user_profile", "update"): FakeResponse([])})
+    anon = FakeClient(
+        {
+            ("user_profile", "update"): FakeResponse([]),
+            ("card_record", "update"): FakeResponse([]),
+        }
+    )
     _patch_anon(monkeypatch, anon)
 
     result = svc.soft_delete_account(USER)
     assert result["deleted"] is True
     assert result["deleted_at"]  # a non-empty ISO timestamp
+
+
+def test_soft_delete_revokes_the_callers_active_cards(monkeypatch):
+    # Part C: closing the account revokes the caller's still-active Continuity Cards so a
+    # closed account stops exposing the recipient's data via a public share link. It reuses
+    # the existing revoked_at marker (set only on not-yet-revoked rows), RLS-scoped to the
+    # caller's own cards.
+    anon = FakeClient(
+        {
+            ("user_profile", "update"): FakeResponse([{"id": "u-1", "deleted_at": _ago(0)}]),
+            ("card_record", "update"): FakeResponse([]),
+        }
+    )
+    _patch_anon(monkeypatch, anon)
+
+    svc.soft_delete_account(USER)
+
+    card_update = next(
+        c for c in anon.calls if c["table"] == "card_record" and c["op"] == "update"
+    )
+    # It SETS revoked_at (the marker the public token resolver checks) ...
+    assert "revoked_at" in card_update["payload"]
+    assert card_update["payload"]["revoked_at"] is not None
+    # ... scoped to the caller's own cards (cannot revoke another user's) ...
+    assert ("user_id", "u-1") in card_update["filters"]
+    # ... and only on cards not already revoked (the audit timestamp of an earlier revoke is
+    # never rewritten): the `.is_("revoked_at", "null")` filter is recorded.
+    assert ("revoked_at", "null") in card_update["filters"]
+
+
+# ---------------------------------------------------------------------------
+# account_status (the computed 90-day recovery window; no write)
+# ---------------------------------------------------------------------------
+
+
+def test_account_status_active_account_reports_not_deleted(monkeypatch):
+    anon = FakeClient({("user_profile", "select"): FakeResponse({"deleted_at": None})})
+    captured = _patch_anon(monkeypatch, anon)
+
+    status = svc.account_status(USER)
+
+    assert status == {
+        "deleted": False,
+        "deleted_at": None,
+        "hard_delete_due_at": None,
+        "reactivatable": False,
+    }
+    # Read under the caller's token, scoped to the caller's own row.
+    assert captured["anon_token"] == "tok-abc"
+    assert ("id", "u-1") in anon.calls[0]["filters"]
+
+
+def test_account_status_within_window_is_reactivatable_and_computes_due_at(monkeypatch):
+    deleted_at = datetime.now(timezone.utc) - timedelta(days=10)
+    anon = FakeClient(
+        {("user_profile", "select"): FakeResponse({"deleted_at": _iso(deleted_at)})}
+    )
+    _patch_anon(monkeypatch, anon)
+
+    status = svc.account_status(USER)
+
+    assert status["deleted"] is True
+    assert status["reactivatable"] is True
+    # hard_delete_due_at is COMPUTED as deleted_at + 90 days, never stored.
+    expected_due = (deleted_at + timedelta(days=svc.RECOVERY_WINDOW_DAYS)).isoformat()
+    assert status["hard_delete_due_at"] == expected_due
+    assert status["deleted_at"] == deleted_at.isoformat()
+
+
+def test_account_status_past_window_is_deleted_but_not_reactivatable(monkeypatch):
+    # 100 days > the 90-day window: still deleted, but past recovery (data due for the purge).
+    deleted_at = datetime.now(timezone.utc) - timedelta(days=100)
+    anon = FakeClient(
+        {("user_profile", "select"): FakeResponse({"deleted_at": _iso(deleted_at)})}
+    )
+    _patch_anon(monkeypatch, anon)
+
+    status = svc.account_status(USER)
+
+    assert status["deleted"] is True
+    assert status["reactivatable"] is False
+    assert status["hard_delete_due_at"] == (
+        deleted_at + timedelta(days=svc.RECOVERY_WINDOW_DAYS)
+    ).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# reactivate_account (clears deleted_at inside the window; refuses past it)
+# ---------------------------------------------------------------------------
+
+
+def test_reactivate_within_window_clears_deleted_at_on_callers_own_row(monkeypatch):
+    anon = FakeClient(
+        {
+            ("user_profile", "select"): FakeResponse({"deleted_at": _ago(5)}),
+            ("user_profile", "update"): FakeResponse([{"id": "u-1", "deleted_at": None}]),
+        }
+    )
+    captured = _patch_anon(monkeypatch, anon)
+
+    result = svc.reactivate_account(USER)
+
+    assert result == {"reactivated": True}
+    assert captured["anon_token"] == "tok-abc"
+    update_call = next(
+        c for c in anon.calls if c["table"] == "user_profile" and c["op"] == "update"
+    )
+    # It CLEARS deleted_at (sets it null) on the caller's own row (cannot reactivate another).
+    assert update_call["payload"] == {"deleted_at": None}
+    assert ("id", "u-1") in update_call["filters"]
+
+
+def test_reactivate_past_window_raises_and_does_not_write(monkeypatch):
+    # 120 days > the 90-day window: reactivation is refused (AccountPurgedError -> 410) and
+    # deleted_at is left untouched (no update call), so the account stays purge-eligible.
+    anon = FakeClient({("user_profile", "select"): FakeResponse({"deleted_at": _ago(120)})})
+    _patch_anon(monkeypatch, anon)
+
+    with pytest.raises(svc.AccountPurgedError):
+        svc.reactivate_account(USER)
+
+    assert not any(c["op"] == "update" for c in anon.calls)
+
+
+def test_reactivate_on_active_account_is_idempotent_success_no_write(monkeypatch):
+    # Not deleted: idempotent success, no write (the benign already-active race).
+    anon = FakeClient({("user_profile", "select"): FakeResponse({"deleted_at": None})})
+    _patch_anon(monkeypatch, anon)
+
+    result = svc.reactivate_account(USER)
+
+    assert result == {"reactivated": True}
+    assert not any(c["op"] == "update" for c in anon.calls)

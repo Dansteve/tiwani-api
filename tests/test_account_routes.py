@@ -46,7 +46,12 @@ def authed(client):
 
 @pytest.mark.parametrize(
     "method,path",
-    [("get", "/api/v3/me/export"), ("post", "/api/v3/me/delete")],
+    [
+        ("get", "/api/v3/me/export"),
+        ("post", "/api/v3/me/delete"),
+        ("get", "/api/v3/me/account-status"),
+        ("post", "/api/v3/me/reactivate"),
+    ],
 )
 def test_account_routes_require_authentication(client, method, path):
     if method == "get":
@@ -165,3 +170,103 @@ def test_closed_account_can_still_reach_the_self_service_routes(authed, monkeypa
     response = authed.post("/api/v3/me/delete")
     assert response.status_code == 200
     assert response.json()["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# GET /me/account-status (the post-login closure check; allow-deleted dependency)
+# ---------------------------------------------------------------------------
+
+
+def test_account_status_returns_the_recovery_window_shape(authed, monkeypatch):
+    due = datetime(2026, 9, 10, 10, 0, tzinfo=timezone.utc).isoformat()
+    monkeypatch.setattr(
+        routes.account_service,
+        "account_status",
+        lambda user: {
+            "deleted": True,
+            "deleted_at": NOW_ISO,
+            "hard_delete_due_at": due,
+            "reactivatable": True,
+        },
+    )
+    response = authed.get("/api/v3/me/account-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted"] is True
+    assert body["reactivatable"] is True
+    assert body["deleted_at"].startswith("2026-06-12T10:00:00")
+    assert body["hard_delete_due_at"].startswith("2026-09-10T10:00:00")
+
+
+def test_account_status_works_for_a_soft_deleted_caller(authed, monkeypatch):
+    # The whole point: a SOFT-DELETED account must reach account-status (the allow-deleted
+    # dependency), so the 410 block does NOT pre-empt it.
+    monkeypatch.setattr(account_service, "is_account_deleted", lambda user: True)
+    monkeypatch.setattr(
+        routes.account_service,
+        "account_status",
+        lambda user: {
+            "deleted": True,
+            "deleted_at": NOW_ISO,
+            "hard_delete_due_at": NOW_ISO,
+            "reactivatable": True,
+        },
+    )
+    response = authed.get("/api/v3/me/account-status")
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+
+
+def test_account_status_active_account(authed, monkeypatch):
+    monkeypatch.setattr(
+        routes.account_service,
+        "account_status",
+        lambda user: {
+            "deleted": False,
+            "deleted_at": None,
+            "hard_delete_due_at": None,
+            "reactivatable": False,
+        },
+    )
+    response = authed.get("/api/v3/me/account-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted"] is False
+    assert body["deleted_at"] is None
+    assert body["hard_delete_due_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# POST /me/reactivate (allow-deleted dependency; 90-day-window guard -> 410)
+# ---------------------------------------------------------------------------
+
+
+def test_reactivate_within_window_returns_reactivated(authed, monkeypatch):
+    monkeypatch.setattr(
+        routes.account_service, "reactivate_account", lambda user: {"reactivated": True}
+    )
+    response = authed.post("/api/v3/me/reactivate")
+    assert response.status_code == 200
+    assert response.json()["reactivated"] is True
+
+
+def test_reactivate_works_for_a_soft_deleted_caller(authed, monkeypatch):
+    # A SOFT-DELETED account must reach reactivate (the allow-deleted dependency): the 410
+    # closure block must NOT pre-empt the reactivation route.
+    monkeypatch.setattr(account_service, "is_account_deleted", lambda user: True)
+    monkeypatch.setattr(
+        routes.account_service, "reactivate_account", lambda user: {"reactivated": True}
+    )
+    response = authed.post("/api/v3/me/reactivate")
+    assert response.status_code == 200
+    assert response.json()["reactivated"] is True
+
+
+def test_reactivate_past_window_is_410(authed, monkeypatch):
+    # The service raises AccountPurgedError past the 90-day window; the route maps it to 410.
+    def _raise(user):
+        raise account_service.AccountPurgedError("past window")
+
+    monkeypatch.setattr(routes.account_service, "reactivate_account", _raise)
+    response = authed.post("/api/v3/me/reactivate")
+    assert response.status_code == 410

@@ -52,6 +52,46 @@ needed; the v3 tables in this directory are the whole schema.
 | `migrations/0010_alert_record_child_id.sql` | A nullable `alert_record.child_id` (FK to `child_profile`, cascade), a guarded sole-child backfill, the unique-key SWAP from `(user_id, chapter)` to `(user_id, child_id, chapter)`, and a matching `(user_id, child_id, chapter)` index | APPLIED TO PRODUCTION 2026-06-12 (multi-recipient go-live; backfill verified, 0 nulls; applied after 0009). Part of the Multi Care Recipient backend (`Docs/FeatureDecisions.md`). The old `(user_id, chapter)` UNIQUE (from `0005`) would force two recipients to SHARE one alert row per chapter (B's evaluation overwrites A's, one dismissal silences both); moving the active-alert invariant to `(user_id, child_id, chapter)` keeps alerts per-recipient. The constraint swap is the one ALTER that changes an existing object, required for correctness. RLS unchanged (`child_id` is always a caller-owned child). NULLABLE for the backfill; a follow-up sets NOT NULL. |
 | `migrations/0011_pulse_record_child_id.sql` | A nullable `pulse_record.child_id` (FK to `child_profile`, cascade), an index on `(user_id, child_id, chapter)`, and a guarded backfill that sets `child_id` from each pulse's OWN `activity_record` | APPLIED TO PRODUCTION 2026-06-12 (multi-recipient go-live; backfill verified, 0 nulls; applied with 0009/0010). A deliberate ADDITION to the design note's two-migration list: the LCI (§4.8) is FOLDED from `pulse_record`, which had no `child_id`, so two recipients' pulses for the same chapter would pool into one fold. A pulse provably belongs to one recipient (its activity's `child_id`), so storing it on the pulse is correct and makes `pulse_record` consistent with `activity_record` / `card_record`. RLS unchanged. NULLABLE for the backfill; a follow-up sets NOT NULL. The service writes `child_id` on every new pulse. |
 | `migrations/0012_waitlist.sql` | The `waitlist` table (`email`, `contexts text[]`, `source`, `created_at`) documented AS IT EXISTS in production, RLS enabled with an anon-INSERT-only policy, and the minimal `grant insert ... to anon` | VERSION-CONTROL ONLY (owner decision 2026-06-12), an idempotent NO-OP on the live table: `waitlist` was a Supabase-dashboard live edit (CTO audit finding B3) with no migration; this brings it under version control so it is reproducible in a fresh environment. RLS is ON with ONLY anon-INSERT (no select/update/delete policy), so the list is write-only for public sign-ups. Tightening the leftover dashboard-era anon/authenticated grants down to insert-only is a DEFERRED follow-up (`00NN_waitlist_revoke.sql`), deliberately not done here. The live form posts to Google Sheets (SheetMonkey) today; this table is the schema-of-record for a future Supabase-backed waitlist. |
+| `migrations/0013_user_profile_soft_delete.sql` | A nullable `user_profile.deleted_at` (the soft-delete marker: null = active, set = closed). Backs account closure (`POST /api/v3/me/delete`) and the 90-day recovery window. | PENDING OWNER APPLY (not applied to production by the feature change; same posture as 0012's deferred follow-ups). Account deletion is a SOFT delete: it sets `deleted_at` and RETAINS the data for 90 days, during which the Coordinator REACTIVATES by signing back in (`POST /api/v3/me/reactivate` clears `deleted_at`); at 90 days the data is permanently deleted by the MANUAL operational purge below (no automated job). The hard-delete-due moment is COMPUTED in the api (`deleted_at + 90 days`, `GET /api/v3/me/account-status`), deliberately NOT a stored column. ADDITIVE + IDEMPOTENT; no RLS change needed (the `0001` `user_profile_select_own` / `user_profile_update_own` policies already scope the column to `auth.uid() = id`, so the owner reads, sets, and clears their OWN `deleted_at`). On closure the api also revokes the caller's active `card_record` rows (sets `revoked_at`), so a closed account stops exposing the recipient's data via a public share link. |
+
+## Operational hard-delete purge (manual, no automated job)
+
+Account deletion (`0013`) is a SOFT delete with a 90-day recovery window: `user_profile.deleted_at`
+is set, the data is retained, and the Coordinator can reactivate by signing back in within 90 days.
+At 90 days the data is permanently deleted. There is **no automated purge job**: the hard delete is a
+deliberate MANUAL / operational step the owner runs against production (the same direct-Postgres path
+that applies migrations). This is documented here so the operator has the exact query; it is NOT wired
+into the app or any scheduler.
+
+To purge every account whose recovery window has fully elapsed (closed more than 90 days ago), delete
+the `user_profile` rows; the v3 child/record tables (`child_profile`, `activity_record`,
+`pulse_record`, `lci_snapshot`, `alert_record`, `card_record`) cascade from `user_profile.id` /
+`auth.users(id)`, so removing the profile (and the matching `auth.users` row) removes the dependent
+data. Run inside a transaction after a backup, and review the affected rows first:
+
+```sql
+-- 1. REVIEW: which accounts are past the 90-day window (closed > 90 days ago)?
+select id, deleted_at, deleted_at + interval '90 days' as hard_delete_due_at
+from public.user_profile
+where deleted_at is not null
+  and deleted_at + interval '90 days' <= now()
+order by deleted_at;
+
+-- 2. PURGE (in a transaction, after a backup): remove the expired accounts. Deleting the
+--    auth.users row cascades to user_profile and to every user-owned v3 table (all FK
+--    on delete cascade), so this single delete removes the account and all its data.
+begin;
+delete from auth.users u
+using public.user_profile p
+where u.id = p.id
+  and p.deleted_at is not null
+  and p.deleted_at + interval '90 days' <= now();
+commit;
+```
+
+The 90-day interval here MUST match the api's `RECOVERY_WINDOW_DAYS` (`app/services/account.py`); they
+are the same policy expressed in two places (the computed `hard_delete_due_at` the app shows, and the
+operator's purge cut-off).
 
 ## Applying migrations
 

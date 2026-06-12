@@ -60,6 +60,13 @@ class FakeQuery:
         self._filters.append((column, value))
         return self
 
+    def is_(self, column: str, value: Any) -> "FakeQuery":
+        # PostgREST `.is_(col, "null")` (used by the bulk card revoke to match only
+        # not-yet-revoked rows). Recorded as a filter so a test can assert it; the marker
+        # value ("null") is recorded verbatim, the fake does no actual filtering.
+        self._filters.append((column, value))
+        return self
+
     def order(self, *args: Any, **kwargs: Any) -> "FakeQuery":
         return self
 
