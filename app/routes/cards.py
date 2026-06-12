@@ -57,6 +57,7 @@ from app.models.card import (
     CreateCardRequest,
 )
 from app.services import cards as cards_service
+from app.services.entitlements import EntitlementError, require_entitlement
 
 router = APIRouter()
 
@@ -162,14 +163,22 @@ def read_owned_card_pdf(
     render time so a prohibited word can never reach the page. The response is an
     application/pdf attachment so the browser downloads it. 401 without a valid token.
 
-    PAID CONVENIENCE (Docs/FeatureDecisions.md): the PDF export is gated on the
+    PAID CONVENIENCE (Docs/FeatureDecisions.md): the PDF export is GATED on the
     `card.pdf_export` entitlement, acceptable only because the free public web card is
-    browser-printable. The gate is NOT wired here yet (it lives on
-    feat/api-subscription-foundation, not merged). At integration, wrap exactly this
-    handler body with `require_entitlement(user, "card.pdf_export")` as the first line,
-    BEFORE the read below: an entitled caller proceeds, an unentitled one is refused
-    (402/403) before any card is read or rendered.
+    browser-printable. The gate is the FIRST line below, BEFORE any card is read or
+    rendered: an entitled caller (standard / premium) proceeds; an unentitled caller
+    (free) is refused with 402 Payment Required, and the gate FAILS CLOSED, so an
+    unknown tier or an unreadable entitlement row also refuses. The free web card stays
+    browser-printable, so the safety net is untouched (`card.pdf_export` is a paid
+    allowlist key, never a must-stay-free key).
     """
+    try:
+        require_entitlement(user, "card.pdf_export")
+    except EntitlementError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="A paid plan is needed to export this card as a PDF.",
+        ) from exc
     content = cards_service.read_card_content_by_id(user, card_id)
     if content is None:
         raise HTTPException(

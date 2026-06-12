@@ -606,7 +606,9 @@ def test_get_card_pdf_requires_authentication(client):
 
 def test_get_card_pdf_returns_a_pdf_for_the_owner(authed, monkeypatch):
     # The owner re-open-by-id path resolves the governed content; the route renders it and
-    # returns an application/pdf attachment with the real PDF magic bytes.
+    # returns an application/pdf attachment with the real PDF magic bytes. The paid-feature gate
+    # is granted here so the test exercises the render path (the 402 deny path is its own test).
+    monkeypatch.setattr(cards_routes, "require_entitlement", lambda user, key: None)
     monkeypatch.setattr(
         cards_routes.cards_service,
         "read_card_content_by_id",
@@ -622,9 +624,31 @@ def test_get_card_pdf_returns_a_pdf_for_the_owner(authed, monkeypatch):
     assert len(response.content) > 500  # a non-trivial, rendered document
 
 
+def test_get_card_pdf_is_402_when_not_entitled(authed, monkeypatch):
+    # The paid-feature gate (card.pdf_export) runs FIRST: an unentitled caller (free / unknown
+    # tier / unreadable entitlement, the gate fails closed) is refused 402 BEFORE any card is read
+    # or rendered. The free web card stays browser-printable, so the safety net is untouched.
+    def _deny(user, feature_key):
+        assert feature_key == "card.pdf_export"
+        raise cards_routes.EntitlementError(feature_key, "free")
+
+    monkeypatch.setattr(cards_routes, "require_entitlement", _deny)
+
+    def _must_not_be_reached(user, card_id):
+        raise AssertionError("the card was read before the entitlement gate ran")
+
+    monkeypatch.setattr(
+        cards_routes.cards_service, "read_card_content_by_id", _must_not_be_reached
+    )
+    response = authed.get("/api/v3/cards/card-1/pdf")
+    assert response.status_code == 402
+    assert response.headers["content-type"] != "application/pdf"
+
+
 def test_get_card_pdf_not_owned_is_404(authed, monkeypatch):
     # The same scoping as the View: a card the caller does not own resolves to None -> 404,
-    # and NO PDF is rendered for it.
+    # and NO PDF is rendered for it. (The paid-feature gate is granted so we reach the scoping.)
+    monkeypatch.setattr(cards_routes, "require_entitlement", lambda user, key: None)
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_content_by_id", lambda user, card_id: None
     )
@@ -636,6 +660,7 @@ def test_get_card_pdf_not_owned_is_404(authed, monkeypatch):
 def test_get_card_pdf_uses_the_read_by_id_path_with_the_card_id(authed, monkeypatch):
     # The route passes the path card_id straight to the owner re-open-by-id service call
     # (the same scoping as the View), so the PDF can only ever be of the caller's own card.
+    monkeypatch.setattr(cards_routes, "require_entitlement", lambda user, key: None)
     seen = {}
 
     def _capture(user, card_id):
