@@ -216,12 +216,15 @@ async def _run() -> None:
         await _set_user(conn, user_a)
         insert_blocked = False
         try:
-            await conn.execute(
-                "insert into public.subscription (user_id, tier_key, status) values "
-                "($1, 'premium', 'active') "
-                "on conflict (user_id) do update set tier_key = 'premium'",
-                uuid.UUID(user_a),
-            )
+            # A nested transaction = a SAVEPOINT: the RLS denial here raises and aborts only the
+            # savepoint, so the outer transaction stays usable for the remaining assertions.
+            async with conn.transaction():
+                await conn.execute(
+                    "insert into public.subscription (user_id, tier_key, status) values "
+                    "($1, 'premium', 'active') "
+                    "on conflict (user_id) do update set tier_key = 'premium'",
+                    uuid.UUID(user_a),
+                )
         except asyncpg.exceptions.InsufficientPrivilegeError:
             insert_blocked = True
         # Either a hard privilege error, or (on conflict) zero effective change: re-check the tier.
