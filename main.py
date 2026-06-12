@@ -2,7 +2,17 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3
+from app.routes import (
+    account_v3,
+    alerts,
+    cards,
+    chapters_v3,
+    lci,
+    plans,
+    profile_v3,
+    pulses,
+    sharing,
+)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -56,6 +66,14 @@ app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
 # OTHER v3 route rejects a closed account with 410 (the soft-delete block in
 # get_current_user). Registered under /api/v3 behind the current-user dependency.
 app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (export & delete)"])
+# Shared-Child sharing (Docs/FeatureDecisions.md, the Shared-Child REFINE entry): a
+# Coordinator shares a recipient's Continuity Card with another person, who sees ONLY that
+# card (the visibility CEILING), with first-class recorded consent, a visible roster, and
+# instant owner-revoke. Built on the 0015 membership substrate + the 0016 feature functions
+# (PENDING OWNER APPLY); the user-facing copy is GOVERNED (app/engines/sharing). Writes are
+# owner-only at the DB and the service; the card read is membership-gated in SQL. Registered
+# under /api/v3 behind the current-user dependency.
+app.include_router(sharing.router, prefix="/api/v3", tags=["v3 Shared-Child Sharing"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.

@@ -24,6 +24,21 @@ class FakeResponse:
         self.data = data
 
 
+def _resolve_scripted(scripted: Any) -> "FakeResponse":
+    """Turn one scripted value into the execute() result.
+
+    A scripted Exception INSTANCE is RAISED (so a service's RPC error path, e.g. the
+    sharing redeem failure or the adult-consent block raised by the SECURITY DEFINER RPC,
+    can be exercised). A FakeResponse passes through. Anything else is wrapped as the
+    response's .data (the pre-existing default).
+    """
+    if isinstance(scripted, BaseException):
+        raise scripted
+    if isinstance(scripted, FakeResponse):
+        return scripted
+    return FakeResponse(scripted)
+
+
 class FakeQuery:
     """A recording fluent query builder. All chain methods return self."""
 
@@ -67,6 +82,13 @@ class FakeQuery:
         self._filters.append((column, value))
         return self
 
+    def neq(self, column: str, value: Any) -> "FakeQuery":
+        # PostgREST `.neq(col, value)` (used by the sharing roster/revoke to exclude the
+        # owner row, `role != 'owner'`). Recorded as a filter like eq; the fake does no
+        # actual filtering, so a test scripts the already-filtered rows it expects.
+        self._filters.append((column, value))
+        return self
+
     def order(self, *args: Any, **kwargs: Any) -> "FakeQuery":
         return self
 
@@ -98,11 +120,9 @@ class FakeQuery:
         scripted = self._scripts[key]
         # A list of scripted responses is consumed in order (so a get-or-create
         # can return None on the first select and a row on the read-back).
-        if isinstance(scripted, list) and scripted and isinstance(scripted[0], FakeResponse):
-            return scripted.pop(0)
-        if isinstance(scripted, FakeResponse):
-            return scripted
-        return FakeResponse(scripted)
+        if isinstance(scripted, list) and scripted:
+            scripted = scripted.pop(0)
+        return _resolve_scripted(scripted)
 
 
 class FakeRpc:
@@ -131,11 +151,9 @@ class FakeRpc:
         if key not in self._scripts:
             raise AssertionError(f"No scripted Supabase response for {key}")
         scripted = self._scripts[key]
-        if isinstance(scripted, list) and scripted and isinstance(scripted[0], FakeResponse):
-            return scripted.pop(0)
-        if isinstance(scripted, FakeResponse):
-            return scripted
-        return FakeResponse(scripted)
+        if isinstance(scripted, list) and scripted:
+            scripted = scripted.pop(0)
+        return _resolve_scripted(scripted)
 
 
 class FakeClient:
