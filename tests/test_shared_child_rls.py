@@ -372,6 +372,63 @@ def test_viewer_cannot_read_profile_lci_alerts_or_pulse(rls, event_loop):
     assert pulse == [], "RLS leak: a viewer read the recipient's pulse_record"
 
 
+def test_switcher_surfacing_a_viewer_does_not_widen_reads(rls, event_loop):
+    """The mandatory proof for the Helper Village ACCESS fix (Docs/FeatureDecisions.md,
+    2026-06-12, refinement 1): a viewer SURFACED in the recipient switcher still reads ZERO
+    from child_profile / lci_snapshot / alert_record / pulse_record.
+
+    GET /api/v3/recipients surfaces a member through the SAME capped paths shared_with_me uses
+    (the recipient_membership select + get_recipient_card_for_member for the first name), and
+    queries NONE of the owner-only tables for a member. This proves at the DB level that the
+    act of surfacing the viewer (their membership resolves AND the capped card yields the first
+    name) does not widen what the viewer can read: the owner-only RLS is untouched, so the
+    ceiling holds exactly as before. (TASK A adds no migration; the policy set is unchanged.)
+    """
+    conn, ids = rls
+
+    async def _check():
+        async with conn.transaction():
+            await _grant_viewer(conn, ids)
+            await _set_caller(conn, ids["viewer"])
+            # SURFACED: the membership row the switcher list reads resolves, and the capped
+            # card path yields the first name (the ONLY recipient data the switcher exposes).
+            membership = await conn.fetch(
+                "select recipient_id, role from public.recipient_membership "
+                "where user_id = $1 and revoked_at is null",
+                ids["viewer"],
+            )
+            card = await conn.fetchval(
+                "select public.get_recipient_card_for_member($1)", ids["recipient"]
+            )
+            # CEILING: the same surfaced viewer reads NOTHING from the owner-only tables.
+            profile = await conn.fetch(
+                "select id from public.child_profile where id = $1", ids["recipient"]
+            )
+            lci = await conn.fetch(
+                "select id from public.lci_snapshot where child_id = $1", ids["recipient"]
+            )
+            alerts = await conn.fetch(
+                "select id from public.alert_record where child_id = $1", ids["recipient"]
+            )
+            pulse = await conn.fetch(
+                "select id from public.pulse_record where child_id = $1", ids["recipient"]
+            )
+        return membership, card, profile, lci, alerts, pulse
+
+    membership, card, profile, lci, alerts, pulse = _run(event_loop, _check())
+    # SURFACED: the viewer's membership resolves (so the recipient appears in the switcher) and
+    # the capped card yields the first name only (the ceiling-safe label).
+    assert any(
+        str(m["recipient_id"]) == ids["recipient"] and m["role"] == "viewer" for m in membership
+    ), "the viewer must be surfaceable in the switcher (their membership resolves)"
+    assert card is not None and json.loads(card)["child_first_name"] == "Ade"
+    # CEILING UNCHANGED: zero rows from every owner-only table, exactly as before surfacing.
+    assert profile == [], "RLS leak: a switcher-surfaced viewer read child_profile"
+    assert lci == [], "RLS leak: a switcher-surfaced viewer read lci_snapshot"
+    assert alerts == [], "RLS leak: a switcher-surfaced viewer read alert_record"
+    assert pulse == [], "RLS leak: a switcher-surfaced viewer read pulse_record"
+
+
 # ===========================================================================
 # 3. VIEWER CANNOT WRITE.
 # ===========================================================================

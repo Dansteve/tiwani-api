@@ -17,7 +17,8 @@ Endpoints:
   PUT  /api/v3/profile     update the caller's profile (partial)
   POST /api/v3/child       create the caller's care recipient
   GET  /api/v3/child       the caller's active care recipient (404 if none)
-  GET  /api/v3/children    the caller's care recipients (the switcher list)
+  GET  /api/v3/children    the caller's OWNED care recipients (owner-only, full profiles)
+  GET  /api/v3/recipients  the switcher list: OWNED + recipients SHARED with the caller, role-tagged
   PUT  /api/v3/child/{id}  update the caller's care recipient (partial)
   POST /api/v3/onboarding  the structured onboarding write (once); marks complete
 """
@@ -33,8 +34,10 @@ from app.models.child_profile import (
     ChildProfileUpdate,
 )
 from app.models.onboarding import OnboardingPayload
+from app.models.recipient import ActiveRecipient
 from app.models.user_profile import UserProfile, UserProfileUpdate
 from app.services import profile as profile_service
+from app.services import recipients as recipients_service
 
 router = APIRouter()
 
@@ -136,6 +139,28 @@ def list_children(user: AuthedUser = Depends(get_current_user)) -> List[ChildPro
     """
     rows = profile_service.list_children(user)
     return [ChildProfile.model_validate(row) for row in rows]
+
+
+@router.get("/recipients", response_model=List[ActiveRecipient])
+def list_recipients(user: AuthedUser = Depends(get_current_user)) -> List[ActiveRecipient]:
+    """The switcher list: the caller's OWNED recipients + the recipients SHARED with them.
+
+    The active-recipient plumbing the app's RecipientProvider reads (Docs/FeatureDecisions.md,
+    the 2026-06-12 "Helper Village ACCESS" entry, refinement 1). Returns the UNION of:
+      - the caller's OWNED recipients (role=owner, full first name), and
+      - the recipients SHARED with the caller (their active non-owner recipient_membership
+        rows, role=viewer/editor),
+    each tagged with the caller's ROLE so the app can drive the visibility CEILING (an owner
+    reaches every screen; a viewer reaches only the Village + the shared Card). Unlike GET
+    /children (owner-only full profiles), this includes member recipients, so a helper who
+    redeemed an invite finally reaches the switcher and the Village to claim a need.
+
+    THE CEILING (security-critical): a member entry carries the recipient id + the FIRST NAME
+    ONLY + the role, never the raw profile. The first name of a SHARED recipient is read only
+    through the capped member-card path (get_recipient_card_for_member), never child_profile
+    (RLS-blocked for a member). An empty list is a valid 200 (a fresh user with nothing yet).
+    """
+    return recipients_service.list_active_recipients(user)
 
 
 @router.put("/child/{child_id}", response_model=ChildProfile)
