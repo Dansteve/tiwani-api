@@ -29,4 +29,78 @@ jobs:
       - name: Test
         # The suite sets dummy Supabase env vars in tests/conftest.py before
         # importing the app, so it runs without real secrets or a live database.
+        # tests/test_rls_isolation.py SKIPS here (no RLS_TEST_DATABASE_URL); it runs
+        # for real in the dedicated rls-isolation job below.
         run: pytest
+
+  # Cross-user RLS isolation, executed against a REAL ephemeral Postgres (Expert
+  # Review M1). The fakes-backed suite above proves the api sends user-scoped
+  # queries; this job proves the DATABASE itself refuses a cross-user read, by
+  # applying the real supabase/migrations/*.sql to a throwaway postgres:16 and
+  # running tests/test_rls_isolation.py against it. If a SELECT/INSERT/UPDATE/
+  # DELETE policy ever leaks one user's rows to another, this job goes red.
+  rls-isolation:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tiwani_rls_test
+        ports:
+          - 5432:5432
+        # Wait until Postgres is accepting connections before the steps run.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # asyncpg reads this (tests/test_rls_isolation.py). Same host:port the service maps.
+      RLS_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tiwani_rls_test
+      # For the psql apply step below.
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: tiwani_rls_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Apply the Supabase shim, then every migration, to the throwaway DB
+        # The shim recreates the four Supabase objects the public migrations depend
+        # on (the auth schema + auth.users, auth.uid(), and the anon/authenticated/
+        # service_role roles); then the real migrations apply UNCHANGED, in order.
+        # ON_ERROR_STOP=1 so a bad migration fails the job loudly instead of being
+        # silently skipped.
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f supabase/test/0000_supabase_shim.sql
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Run the cross-user RLS isolation test (must prove A cannot read B)
+        run: pytest tests/test_rls_isolation.py -v
