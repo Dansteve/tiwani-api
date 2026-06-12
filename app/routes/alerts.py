@@ -1,11 +1,11 @@
-"""v3 Erosion Alert routes (the governed early-warning surface).
+"""v1 Erosion Alert routes (the governed early-warning surface).
 
 Thin HTTP only (HardRules/Api/SETUP.md): call the alerts service (which reads the
 stored alert_record rows and renders the GOVERNED copy), serialize. Both routes
 require the current-user dependency (401 without a valid bearer token); the reads and
 the dismissal are user-scoped through the service with Supabase RLS as the backstop.
 
-Registered under /api/v3 in main.py. Alerts are evaluated server-side after every
+Registered under /api/v1 in main.py. Alerts are evaluated server-side after every
 pulse (section 4.9, AUTHORITATIVE); these routes only expose the ACTIVE alerts and
 the dismissal. The copy the app renders is the api's verbatim governed text; the app
 never authors or paraphrases it.
@@ -14,10 +14,10 @@ GOVERNED COPY + LAUNCH GATE: the alert copy these routes surface does not ship t
 without psychiatrist sign-off (Task 12 / Product.md section 8 Q6).
 
 Endpoints:
-  GET  /api/v3/alerts                    the caller's active (non-dismissed) alerts,
+  GET  /api/v1/alerts                    the caller's active (non-dismissed) alerts,
                                          each {chapter, level, copy, action_label,
                                          signposts}.
-  POST /api/v3/alerts/{chapter}/dismiss  dismiss a chapter's active alert; it returns
+  POST /api/v1/alerts/{chapter}/dismiss  dismiss a chapter's active alert; it returns
                                          only if conditions worsen past the next
                                          threshold. 404 if no active alert.
 """
@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
 from app.models.alert import AlertView, DismissResult
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.services import alerts as alerts_service
 from app.services import profile as profile_service
 

@@ -11,7 +11,7 @@ recipient's tags / LCI / alerts / score, and the exact location + contact are pr
 on the claimer-or-owner detail view.
 
   - NeedStatus: the status machine (open / claimed / confirmed / done / cancelled).
-  - CreateNeedRequest: the POST /api/v3/village/needs body (what / when / where / contact).
+  - CreateNeedRequest: the POST /api/v1/village/needs body (what / when / where / contact).
   - NeedSummary: one row of the member's broadcast list. Carries the title, detail, the
     WHEN window, an AREA-level where (never the exact place), the status, the recipient's
     FIRST name, and whether the CALLER holds the claim. NO contact, NO exact location: the
@@ -57,7 +57,7 @@ class NeedStatus(str, Enum):
 
 
 class CreateNeedRequest(BaseModel):
-    """The POST /api/v3/village/needs body: a specific, bounded ask (refinement 1).
+    """The POST /api/v1/village/needs body: a specific, bounded ask (refinement 1).
 
     recipient_id is the ONE care recipient the need is for (the owner must own it, and the
     recipient must have a recorded village consent, both enforced by the create RPC).
@@ -151,7 +151,7 @@ class NeedActionResult(BaseModel):
 
 
 class RecordConsentRequest(BaseModel):
-    """The POST /api/v3/village/consent body: record per-recipient village consent.
+    """The POST /api/v1/village/consent body: record per-recipient village consent.
 
     recipient_id is the recipient the owner is recording consent for (Art. 9, refinement
     5). The consent TEXT is the governed text (app/engines/village/copy.py), supplied by

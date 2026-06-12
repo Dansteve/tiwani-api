@@ -1,7 +1,7 @@
 """Account self-service data service (v3): export, soft-delete, reactivation.
 
-The thin data layer behind the self-service account routes (GET /api/v3/me/export,
-POST /api/v3/me/delete, GET /api/v3/me/account-status, POST /api/v3/me/reactivate) and the
+The thin data layer behind the self-service account routes (GET /api/v1/me/export,
+POST /api/v1/me/delete, GET /api/v1/me/account-status, POST /api/v1/me/reactivate) and the
 soft-delete access block. It owns the Supabase reads and writes for a Coordinator acting on
 their OWN account.
 
@@ -182,7 +182,7 @@ def is_account_deleted(user: AuthedUser) -> bool:
 def export_account(user: AuthedUser) -> Dict[str, Any]:
     """Return a JSON-serialisable document of the caller's OWN data (RLS-scoped).
 
-    The data behind GET /api/v3/me/export. It gathers, under the caller's token, every row
+    The data behind GET /api/v1/me/export. It gathers, under the caller's token, every row
     that belongs to them: the user_profile row, their child_profile rows, and the
     user-owned records (activity_record, pulse_record, lci_snapshot, alert_record,
     card_record). Each select runs through the RLS-scoped anon client AND filters by
@@ -220,7 +220,7 @@ def export_account(user: AuthedUser) -> Dict[str, Any]:
 def soft_delete_account(user: AuthedUser) -> Dict[str, Any]:
     """Close the caller's account: set user_profile.deleted_at = now() (SOFT delete) + revoke cards.
 
-    The write behind POST /api/v3/me/delete. It is a SOFT delete: the row is NOT removed and
+    The write behind POST /api/v1/me/delete. It is a SOFT delete: the row is NOT removed and
     no child data is scrubbed; the account is marked closed and the data is RETAINED for the
     90-day recovery window (RECOVERY_WINDOW_DAYS). It is recoverable: the user can reactivate
     by signing back in within 90 days (reactivate_account). After 90 days the data is
@@ -290,7 +290,7 @@ def _revoke_active_cards(user: AuthedUser, *, revoked_at: datetime) -> None:
 def account_status(user: AuthedUser) -> Dict[str, Any]:
     """The caller's closure state + the computed 90-day recovery window (no write).
 
-    The data behind GET /api/v3/me/account-status, how the app learns post-login that the
+    The data behind GET /api/v1/me/account-status, how the app learns post-login that the
     account is closed so it can offer reactivation. Reads the caller's OWN
     user_profile.deleted_at under RLS (eq id == user.id) and returns:
 
@@ -328,7 +328,7 @@ def account_status(user: AuthedUser) -> Dict[str, Any]:
 def reactivate_account(user: AuthedUser) -> Dict[str, Any]:
     """Reactivate the caller's soft-deleted account within the 90-day window (clears deleted_at).
 
-    The write behind POST /api/v3/me/reactivate. Reactivation is simply signing back in: this
+    The write behind POST /api/v1/me/reactivate. Reactivation is simply signing back in: this
     clears user_profile.deleted_at on the caller's OWN row (RLS-scoped, eq id == user.id under
     the caller's token, so it can only ever reactivate the caller's own account), after which
     the current-user dependency stops returning 410 and the account is live again.

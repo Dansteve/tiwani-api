@@ -377,7 +377,7 @@ def test_switcher_surfacing_a_viewer_does_not_widen_reads(rls, event_loop):
     2026-06-12, refinement 1): a viewer SURFACED in the recipient switcher still reads ZERO
     from child_profile / lci_snapshot / alert_record / pulse_record.
 
-    GET /api/v3/recipients surfaces a member through the SAME capped paths shared_with_me uses
+    GET /api/v1/recipients surfaces a member through the SAME capped paths shared_with_me uses
     (the recipient_membership select + get_recipient_card_for_member for the first name), and
     queries NONE of the owner-only tables for a member. This proves at the DB level that the
     act of surfacing the viewer (their membership resolves AND the capped card yields the first

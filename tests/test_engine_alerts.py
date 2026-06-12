@@ -36,7 +36,7 @@ from app.engines.alerts import (
 )
 from app.engines.alerts.evaluation import _lci_declining
 from app.engines.lci import Outcome
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.seed import Tier
 
 NOW = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)

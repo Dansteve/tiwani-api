@@ -125,7 +125,7 @@ def test_webhook_fails_closed_when_stripe_unconfigured(client):
     # No keys yet: verify_and_parse_event raises StripeNotConfiguredError, the route returns
     # 503 and writes NOTHING. A webhook cannot move state without real signature verification.
     response = client.post(
-        "/api/v3/billing/webhook",
+        "/api/v1/billing/webhook",
         content=b'{"id":"evt_1"}',
         headers={"stripe-signature": "t=1,v1=deadbeef"},
     )
@@ -135,7 +135,7 @@ def test_webhook_fails_closed_when_stripe_unconfigured(client):
 def test_webhook_does_not_require_supabase_auth(client):
     # The webhook is NOT behind get_current_user (Stripe is not a logged-in user): with no
     # Authorization header it still reaches the verifier (and 503s on the stub), never a 401.
-    response = client.post("/api/v3/billing/webhook", content=b"{}")
+    response = client.post("/api/v1/billing/webhook", content=b"{}")
     assert response.status_code != 401
     assert response.status_code == 503
 
@@ -157,7 +157,7 @@ def test_webhook_writes_via_rpc_and_reports_applied(client, monkeypatch):
     monkeypatch.setattr(sub_service, "get_service_client", lambda: rpc_client)
 
     response = client.post(
-        "/api/v3/billing/webhook",
+        "/api/v1/billing/webhook",
         content=b"{}",
         headers={"stripe-signature": "t=1,v1=sig"},
     )
@@ -177,7 +177,7 @@ def test_webhook_replay_is_idempotent_no_op(client, monkeypatch):
     monkeypatch.setattr(sub_service, "get_service_client", lambda: rpc_client)
 
     response = client.post(
-        "/api/v3/billing/webhook", content=b"{}", headers={"stripe-signature": "s"}
+        "/api/v1/billing/webhook", content=b"{}", headers={"stripe-signature": "s"}
     )
     assert response.status_code == 200
     assert response.json() == {"received": True, "applied": False}
@@ -192,6 +192,6 @@ def test_webhook_rejects_a_bad_signature(client, monkeypatch):
     monkeypatch.setattr(billing_routes.stripe_stub, "verify_and_parse_event", _bad_sig)
     # If the write were reached it would explode (no service client scripted), proving none ran.
     response = client.post(
-        "/api/v3/billing/webhook", content=b"{}", headers={"stripe-signature": "bad"}
+        "/api/v1/billing/webhook", content=b"{}", headers={"stripe-signature": "bad"}
     )
     assert response.status_code == 400

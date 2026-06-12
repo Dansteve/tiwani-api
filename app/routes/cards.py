@@ -1,4 +1,4 @@
-"""v3 Continuity Card routes (the shareable support summary + Card History).
+"""v1 Continuity Card routes (the shareable support summary + Card History).
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse and validate, call the cards service
 (which verifies ownership, assembles the SAFE content, stores / lists / revokes a card,
@@ -7,36 +7,36 @@ one-page support summary a Coordinator generates for a HELPER and shares via a l
 needs NO account; Card History lets the Coordinator see and manage the cards they made.
 
 The routes, by trust:
-  POST   /api/v3/cards                   AUTH REQUIRED. Body {activity_id}. Verifies the
+  POST   /api/v1/cards                   AUTH REQUIRED. Body {activity_id}. Verifies the
                                          activity belongs to the caller, creates the card,
                                          returns content + share token + expiry. 404 if
                                          the activity is not the caller's. 401 without a
                                          valid bearer token.
-  GET    /api/v3/cards                   AUTH REQUIRED. The caller's Card History: their
+  GET    /api/v1/cards                   AUTH REQUIRED. The caller's Card History: their
                                          own cards, newest first, each with status
                                          (active / expired / revoked) and the staleness
                                          signal. RLS-scoped to the caller. 401 without a
                                          valid token.
-  POST   /api/v3/cards/{card_id}/revoke  AUTH REQUIRED, owner only. SOFT-revokes the
+  POST   /api/v1/cards/{card_id}/revoke  AUTH REQUIRED, owner only. SOFT-revokes the
                                          caller's card (sets revoked_at; the audit row is
                                          kept). 404 if the card is not the caller's. After
                                          it returns, the public token read 404s.
-  GET    /api/v3/cards/{card_id}/content AUTH REQUIRED, owner only. The Card History "View":
+  GET    /api/v1/cards/{card_id}/content AUTH REQUIRED, owner only. The Card History "View":
                                          the owner re-opens their card by id and gets the
                                          SAME safe content a helper sees. 404 if not theirs.
-  GET    /api/v3/cards/{card_id}/pdf     AUTH REQUIRED, owner only. The printable export: a
+  GET    /api/v1/cards/{card_id}/pdf     AUTH REQUIRED, owner only. The printable export: a
                                          PDF of the SAME governed content as the View (same
                                          read-by-id scoping). 404 if not theirs. A PAID
                                          convenience (the gate wraps this at integration);
                                          the free web card stays browser-printable.
-  GET    /api/v3/cards/{token}           NO AUTH. The helper opens the share link. Returns
+  GET    /api/v1/cards/{token}           NO AUTH. The helper opens the share link. Returns
                                          ONLY the safe content if the token is valid, not
                                          expired, AND not revoked, else 404. Never returns
                                          user_id / child_id or any other row: the read goes
                                          through the SECURITY DEFINER function (migrations
                                          0007 + 0008), not a table select.
 
-Registered under /api/v3 in main.py. The owner paths are user-scoped through the service
+Registered under /api/v1 in main.py. The owner paths are user-scoped through the service
 with Supabase RLS as the backstop; the token path is the only unauthenticated read and is
 deliberately narrow. Note the path order: GET /cards (the list) and the {card_id}/revoke
 route are declared before GET /cards/{token}, but FastAPI matches the static and the more

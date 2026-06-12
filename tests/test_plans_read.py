@@ -1,8 +1,8 @@
 """No-DB tests for the v3 stored-plan READ endpoints (list + view).
 
-The two reads return STORED values and never re-run the engine: GET /api/v3/plans
+The two reads return STORED values and never re-run the engine: GET /api/v1/plans
 lists the caller's activity_records as summaries (newest first, optional ?chapter=),
-and GET /api/v3/plans/{activity_id} returns one stored plan in the PreparationPlan
+and GET /api/v1/plans/{activity_id} returns one stored plan in the PreparationPlan
 shape. Two layers, both off a live Supabase (blocked in the sandbox; the task
 requires mocking):
 
@@ -113,8 +113,8 @@ def authed(client):
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v3/plans",
-        "/api/v3/plans/act-1",
+        "/api/v1/plans",
+        "/api/v1/plans/act-1",
     ],
 )
 def test_plan_read_routes_require_authentication(client, path):
@@ -144,7 +144,7 @@ def test_list_plans_returns_the_summary_shape(authed, monkeypatch):
         "list_stored_plans",
         lambda user, **kwargs: [SAMPLE_SUMMARY],
     )
-    response = authed.get("/api/v3/plans")
+    response = authed.get("/api/v1/plans")
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list) and len(body) == 1
@@ -175,7 +175,7 @@ def test_list_plans_passes_the_chapter_filter_to_the_service(authed, monkeypatch
         return []
 
     monkeypatch.setattr(plans_routes.plans_service, "list_stored_plans", _capture)
-    response = authed.get("/api/v3/plans?chapter=travel")
+    response = authed.get("/api/v1/plans?chapter=travel")
     assert response.status_code == 200
     assert captured.get("chapter") == "travel"
 
@@ -188,13 +188,13 @@ def test_list_plans_without_a_chapter_filters_nothing(authed, monkeypatch):
         return []
 
     monkeypatch.setattr(plans_routes.plans_service, "list_stored_plans", _capture)
-    response = authed.get("/api/v3/plans")
+    response = authed.get("/api/v1/plans")
     assert response.status_code == 200
     assert captured.get("chapter") is None
 
 
 def test_list_plans_rejects_an_unknown_chapter_422(authed):
-    response = authed.get("/api/v3/plans?chapter=not-a-chapter")
+    response = authed.get("/api/v1/plans?chapter=not-a-chapter")
     assert response.status_code == 422
 
 
@@ -208,7 +208,7 @@ def test_get_plan_unknown_or_not_owned_is_404(authed, monkeypatch):
         raise plans_service.PlanNotFoundError("nope")
 
     monkeypatch.setattr(plans_routes.plans_service, "get_stored_plan", _raise)
-    response = authed.get("/api/v3/plans/ghost")
+    response = authed.get("/api/v1/plans/ghost")
     assert response.status_code == 404
 
 

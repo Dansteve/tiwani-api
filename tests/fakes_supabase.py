@@ -3,7 +3,7 @@
 The real supabase client builds a fluent query (table -> select/insert/update ->
 filters -> execute) and only opens a connection on execute(). These fakes record
 the calls and return scripted APIResponse-like objects, so the profile service
-and the v3 routes can be unit-tested without a live Supabase (the sandbox blocks
+and the v1 routes can be unit-tested without a live Supabase (the sandbox blocks
 it, and per the task tests must mock the client; HardRules/Api/SETUP.md testing).
 
 A FakeResponse mirrors the .data attribute the service reads (_rows/_first in

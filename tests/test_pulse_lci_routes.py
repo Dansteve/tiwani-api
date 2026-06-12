@@ -61,10 +61,10 @@ def authed(client):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("post", "/api/v3/pulses"),
-        ("get", "/api/v3/pulses/pending"),
-        ("get", "/api/v3/lci/overall"),
-        ("get", "/api/v3/lci/chapters"),
+        ("post", "/api/v1/pulses"),
+        ("get", "/api/v1/pulses/pending"),
+        ("get", "/api/v1/lci/overall"),
+        ("get", "/api/v1/lci/chapters"),
     ],
 )
 def test_pulse_and_lci_routes_require_authentication(client, method, path):
@@ -97,7 +97,7 @@ def test_create_pulse_success_returns_the_record_shape(authed, monkeypatch):
         lambda user, **kwargs: SAMPLE_PULSE,
     )
     response = authed.post(
-        "/api/v3/pulses",
+        "/api/v1/pulses",
         json={"activity_id": "act-1", "outcome_code": "well"},
     )
     assert response.status_code == 200
@@ -122,7 +122,7 @@ def test_create_pulse_unknown_activity_is_404(authed, monkeypatch):
 
     monkeypatch.setattr(pulses_routes.pulse_service, "record_pulse", _raise)
     response = authed.post(
-        "/api/v3/pulses",
+        "/api/v1/pulses",
         json={"activity_id": "ghost", "outcome_code": "well"},
     )
     assert response.status_code == 404
@@ -134,7 +134,7 @@ def test_create_pulse_duplicate_is_409(authed, monkeypatch):
 
     monkeypatch.setattr(pulses_routes.pulse_service, "record_pulse", _raise)
     response = authed.post(
-        "/api/v3/pulses",
+        "/api/v1/pulses",
         json={"activity_id": "act-1", "outcome_code": "okay"},
     )
     assert response.status_code == 409
@@ -142,7 +142,7 @@ def test_create_pulse_duplicate_is_409(authed, monkeypatch):
 
 def test_create_pulse_rejects_an_unknown_outcome_422(authed):
     response = authed.post(
-        "/api/v3/pulses",
+        "/api/v1/pulses",
         json={"activity_id": "act-1", "outcome_code": "great"},
     )
     assert response.status_code == 422

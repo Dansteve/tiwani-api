@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import (
-    profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3,
+    profile, chapters, plans, pulses, lci, alerts, cards, account,
     strategies, sharing, village, billing,
 )
 
@@ -27,52 +27,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# v3 surface (clean rebuild, Docs/Decisions.md D2): profile, care recipient,
+# v1 surface (clean rebuild, Docs/Decisions.md D2): profile, care recipient,
 # onboarding, and the six-chapter dashboard, behind the Supabase-Auth current-user
 # dependency. The pre-v3 prototype routers (auth/user/children/chapters) are
 # un-mounted (CTO audit B1): they queried unmanaged tables through a no-token anon
-# client that RLS did not scope, so only the RLS-scoped v3 surface is mounted.
-app.include_router(profile_v3.router, prefix="/api/v3", tags=["v3 Profile & Onboarding"])
-app.include_router(chapters_v3.router, prefix="/api/v3", tags=["v3 Dashboard Chapters"])
+# client that RLS did not scope, so only the RLS-scoped v1 surface is mounted.
+app.include_router(profile.router, prefix="/api/v1", tags=["v1 Profile & Onboarding"])
+app.include_router(chapters.router, prefix="/api/v1", tags=["v1 Dashboard Chapters"])
 # The Life Continuity Engine endpoints (Product.md section 4.4): prepare a plan and
-# the activity picker. Registered under /api/v3 behind the current-user dependency.
-app.include_router(plans.router, prefix="/api/v3", tags=["v3 Preparation Plan (LCE)"])
+# the activity picker. Registered under /api/v1 behind the current-user dependency.
+app.include_router(plans.router, prefix="/api/v1", tags=["v1 Preparation Plan (LCE)"])
 # The Pulse (section 4.7): record a post-activity outcome (which recomputes the LCI)
-# and list the pending check-ins. Registered under /api/v3 behind current-user.
-app.include_router(pulses.router, prefix="/api/v3", tags=["v3 Pulse (post-activity)"])
+# and list the pending check-ins. Registered under /api/v1 behind current-user.
+app.include_router(pulses.router, prefix="/api/v1", tags=["v1 Pulse (post-activity)"])
 # The Life Continuity Index (section 4.8): the overall and per-chapter resilience
-# scores the dashboard reads. Registered under /api/v3 behind current-user.
-app.include_router(lci.router, prefix="/api/v3", tags=["v3 Life Continuity Index"])
+# scores the dashboard reads. Registered under /api/v1 behind current-user.
+app.include_router(lci.router, prefix="/api/v1", tags=["v1 Life Continuity Index"])
 # The Erosion Alerts (section 4.9, GOVERNED copy, psychiatrist sign-off gated, Task
 # 12): list the active alerts and dismiss one. Evaluated server-side after every
-# pulse. Registered under /api/v3 behind current-user.
-app.include_router(alerts.router, prefix="/api/v3", tags=["v3 Erosion Alerts"])
+# pulse. Registered under /api/v1 behind current-user.
+app.include_router(alerts.router, prefix="/api/v1", tags=["v1 Erosion Alerts"])
 # The Continuity Card (section 4.6): generate a shareable one-page support summary for
 # a helper (POST, auth) and read one by its share token (GET, NO auth, the helper has
-# no account). Registered under /api/v3; the token read is the only unauthenticated
+# no account). Registered under /api/v1; the token read is the only unauthenticated
 # route and is narrow by design (migration 0007 SECURITY DEFINER function).
-app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
+app.include_router(cards.router, prefix="/api/v1", tags=["v1 Continuity Card"])
 # Self-service account (data rights): export the caller's own data as a downloadable
 # JSON document, and CLOSE the account (a SOFT delete that sets user_profile.deleted_at;
 # the data is retained per the retention policy). Both routes are RLS-scoped to the caller
 # and use the allow-deleted authenticator so they work around the moment of closure; every
-# OTHER v3 route rejects a closed account with 410 (the soft-delete block in
-# get_current_user). Registered under /api/v3 behind the current-user dependency.
-app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (export & delete)"])
+# OTHER v1 route rejects a closed account with 410 (the soft-delete block in
+# get_current_user). Registered under /api/v1 behind the current-user dependency.
+app.include_router(account.router, prefix="/api/v1", tags=["v1 Account (export & delete)"])
 # The Strategy Library (section 4.10, Task 9): the learning-layer mutations the Coordinator
 # drives on a saved strategy: suppress (remove; suppressed after 3 for the scenario), re-allow
 # a suppressed one, and dismiss a cross-context "Also worked in [chapter]" surfacing per chapter.
 # Auto-save + promotion + the outcome counts happen in the plan/pulse flows; these routes are the
-# explicit actions. Registered under /api/v3 behind current-user (normal, not allow-deleted).
-app.include_router(strategies.router, prefix="/api/v3", tags=["v3 Strategy Library"])
+# explicit actions. Registered under /api/v1 behind current-user (normal, not allow-deleted).
+app.include_router(strategies.router, prefix="/api/v1", tags=["v1 Strategy Library"])
 # Shared-Child sharing (Docs/FeatureDecisions.md, the Shared-Child REFINE entry): a
 # Coordinator shares a recipient's Continuity Card with another person, who sees ONLY that
 # card (the visibility CEILING), with first-class recorded consent, a visible roster, and
 # instant owner-revoke. Built on the 0015 membership substrate + the 0016 feature functions
 # (PENDING OWNER APPLY); the user-facing copy is GOVERNED (app/engines/sharing). Writes are
 # owner-only at the DB and the service; the card read is membership-gated in SQL. Registered
-# under /api/v3 behind the current-user dependency.
-app.include_router(sharing.router, prefix="/api/v3", tags=["v3 Shared-Child Sharing"])
+# under /api/v1 behind the current-user dependency.
+app.include_router(sharing.router, prefix="/api/v1", tags=["v1 Shared-Child Sharing"])
 # The Village Delegation Hub (Docs/FeatureDecisions.md): a closed need -> claim -> confirm
 # -> done / dropped follow-through loop for a Coordinator's village of helpers, riding the
 # recipient_membership substrate (migration 0015). A need belongs to ONE recipient; a member
@@ -80,7 +80,7 @@ app.include_router(sharing.router, prefix="/api/v3", tags=["v3 Shared-Child Shar
 # claims are atomic first-wins, and per-recipient consent gates a broadcast (Art. 9). All
 # routes require auth and are RLS-scoped; the schema + RPCs are migration 0017 (PENDING
 # OWNER APPLY). The user-facing copy is GOVERNED (psychiatrist sign-off, Task 12).
-app.include_router(village.router, prefix="/api/v3", tags=["v3 Village Hub"])
+app.include_router(village.router, prefix="/api/v1", tags=["v1 Village Hub"])
 # Subscription + billing (Docs/FeatureDecisions.md, the Subscription DEFER entry): the price
 # list and the caller's own subscription (auth, RLS-scoped reads), a STUBBED checkout, and the
 # Stripe webhook. The webhook is the ONLY writer of subscription state and authenticates by
@@ -88,7 +88,7 @@ app.include_router(village.router, prefix="/api/v3", tags=["v3 Village Hub"])
 # (migration 0018, PENDING OWNER APPLY) idempotently on the Stripe event id. The live Stripe
 # SDK calls are STUBBED (PENDING OWNER STRIPE KEYS); the entitlement gate
 # (app/services/entitlements.py) is the one server-side allowlist gate for paid features.
-app.include_router(billing.router, prefix="/api/v3", tags=["v3 Subscription & Billing"])
+app.include_router(billing.router, prefix="/api/v1", tags=["v1 Subscription & Billing"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.

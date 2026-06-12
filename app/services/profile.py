@@ -178,7 +178,7 @@ def get_child(user: AuthedUser) -> Optional[Dict[str, Any]]:
 def list_children(user: AuthedUser) -> List[Dict[str, Any]]:
     """The caller's care recipients, newest first (RLS-scoped).
 
-    The read behind GET /api/v3/children, the list the app switcher reads to offer the
+    The read behind GET /api/v1/children, the list the app switcher reads to offer the
     active recipient. The select filters by user_id and runs under the caller's token, so
     Row Level Security makes another user's recipients physically unreachable: this can
     only ever return the caller's own children. Ordered by created_at descending so the

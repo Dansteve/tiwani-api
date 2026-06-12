@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.child_profile import Tag
 from app.models.seed import (
     CAP_TAG_CONTRIBUTION_PER_DIMENSION,

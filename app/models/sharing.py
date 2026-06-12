@@ -74,7 +74,7 @@ class SubjectKind(str, Enum):
 
 
 class InviteShareRequest(BaseModel):
-    """POST /api/v3/sharing/invites: invite someone to see a recipient's Continuity Card.
+    """POST /api/v1/sharing/invites: invite someone to see a recipient's Continuity Card.
 
     recipient_id is one of the CALLER's own care recipients (the service verifies
     ownership). email is the address the invite is bound to (single-use, email-bound).
@@ -91,7 +91,7 @@ class InviteShareRequest(BaseModel):
 
 
 class InviteCreated(BaseModel):
-    """POST /api/v3/sharing/invites response (the owner's view).
+    """POST /api/v1/sharing/invites response (the owner's view).
 
     Carries the invite_id (to revoke a pending invite), the opaque token (the app builds
     the email-bound share link from it; it is the link's only secret), the expiry, the
@@ -111,7 +111,7 @@ class InviteCreated(BaseModel):
 
 
 class RecordConsentRequest(BaseModel):
-    """POST /api/v3/sharing/consent: an adult recipient records their OWN consent.
+    """POST /api/v1/sharing/consent: an adult recipient records their OWN consent.
 
     recipient_id is one of the caller's own recipients. This is the adult-share
     precondition (refinement 5): the api records the governed adult consent text so a
@@ -130,7 +130,7 @@ class ConsentRecorded(BaseModel):
 
 
 class RedeemInviteRequest(BaseModel):
-    """POST /api/v3/sharing/redeem: the invited (signed-in) person claims their token.
+    """POST /api/v1/sharing/redeem: the invited (signed-in) person claims their token.
 
     token is the opaque secret from the email-bound link. The service requires the
     caller's auth email to match the invite (email-bound) and is atomic + first-wins; a
@@ -191,7 +191,7 @@ class RosterEntry(BaseModel):
 
 
 class Roster(BaseModel):
-    """GET /api/v3/sharing/recipients/{recipient_id}/roster: the full visible roster.
+    """GET /api/v1/sharing/recipients/{recipient_id}/roster: the full visible roster.
 
     The 'who can see [name]'s information' list the board requires (refinement 6):
     recipient_first_name + the governed title copy_key + the entries (active members and
@@ -224,7 +224,7 @@ class SharedRecipient(BaseModel):
 
 
 class SharedWithMe(BaseModel):
-    """GET /api/v3/sharing/shared-with-me: every recipient shared with the caller."""
+    """GET /api/v1/sharing/shared-with-me: every recipient shared with the caller."""
 
     recipients: List[SharedRecipient]
 
@@ -242,7 +242,7 @@ class RevokeResult(BaseModel):
 
 
 class SharedCard(BaseModel):
-    """GET /api/v3/sharing/recipients/{recipient_id}/card: the viewer's capped card read.
+    """GET /api/v1/sharing/recipients/{recipient_id}/card: the viewer's capped card read.
 
     The visibility CEILING (refinement 1): the SAFE Continuity Card content (the SAME
     first-name-only, non-clinical CardContent a helper sees), returned to an active member

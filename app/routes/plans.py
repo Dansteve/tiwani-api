@@ -1,31 +1,31 @@
-"""v3 Preparation Plan routes (the Life Continuity Engine endpoints).
+"""v1 Preparation Plan routes (the Life Continuity Engine endpoints).
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse and validate, call the plans
 service (which runs the engine and stores the record), serialize. All routes
 require the current-user dependency (401 without a valid bearer token); the plan
 write is user-scoped through the service with Supabase RLS as the backstop.
 
-Registered under /api/v3 in main.py, alongside the other v3 routes. The engine is
+Registered under /api/v1 in main.py, alongside the other v1 routes. The engine is
 server-side and deterministic; the app renders the returned plan and never
 recomputes a score (Product.md section 4.4, the LCE-is-server-side rule).
 
 The two GET reads return STORED values and never re-run the engine (the LCE is run
-only on the POST): GET /api/v3/plans lists the caller's stored plans as summaries, and
-GET /api/v3/plans/{activity_id} returns one stored plan in the PreparationPlan shape.
+only on the POST): GET /api/v1/plans lists the caller's stored plans as summaries, and
+GET /api/v1/plans/{activity_id} returns one stored plan in the PreparationPlan shape.
 Both are RLS-scoped to the caller; a non-owned activity_id is a 404 (it is invisible
 under RLS, and the api does not confirm it exists for anyone).
 
 Endpoints:
-  POST /api/v3/plans                        run the LCE for the caller's care
+  POST /api/v1/plans                        run the LCE for the caller's care
                                             recipient + the chosen activity; store
                                             the activity_record; return the plan.
-  GET  /api/v3/plans                         list the caller's STORED plans (their
+  GET  /api/v1/plans                         list the caller's STORED plans (their
                                             activity_records) newest first as
                                             summaries; optional ?chapter= filter.
-  GET  /api/v3/plans/{activity_id}           the caller's full STORED plan for one
+  GET  /api/v1/plans/{activity_id}           the caller's full STORED plan for one
                                             activity, in the PreparationPlan shape;
                                             404 if not the caller's.
-  GET  /api/v3/chapters/{chapter}/activities the seeded activity options for a
+  GET  /api/v1/chapters/{chapter}/activities the seeded activity options for a
                                             chapter (the app's activity picker).
 """
 
@@ -34,7 +34,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.child_profile import Tag
 from app.models.plan import (
     ActivityOption,

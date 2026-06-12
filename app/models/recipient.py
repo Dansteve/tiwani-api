@@ -2,7 +2,7 @@
 app's recipient switcher (Docs/FeatureDecisions.md, the 2026-06-12 "Helper Village ACCESS"
 entry, refinement 1).
 
-GET /api/v3/recipients returns the UNION of (a) the recipients the caller OWNS and (b) the
+GET /api/v1/recipients returns the UNION of (a) the recipients the caller OWNS and (b) the
 recipients shared WITH the caller (their active non-owner recipient_membership rows), each
 tagged with the caller's ROLE. This is the list the app's RecipientProvider reads to resolve
 the active recipient AND to drive the shell's visibility ceiling (an owner reaches every

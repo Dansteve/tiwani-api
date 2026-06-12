@@ -1,7 +1,7 @@
 """The billing READ routes + the stubbed checkout (auth, RLS-scoped).
 
-GET /api/v3/billing/plans and GET /api/v3/billing/me are the app's read surface (show the
-price list + the caller's tier); POST /api/v3/billing/checkout is STUBBED (PENDING OWNER
+GET /api/v1/billing/plans and GET /api/v1/billing/me are the app's read surface (show the
+price list + the caller's tier); POST /api/v1/billing/checkout is STUBBED (PENDING OWNER
 STRIPE KEYS) and returns 503. All three require the Supabase current user (a user can SEE the
 plans and their tier, and START a checkout, but never SET their tier). The reads are proven to
 serialize the plan_tier / subscription rows; the gate is tested separately.
@@ -42,9 +42,9 @@ def authed(client):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("get", "/api/v3/billing/plans"),
-        ("get", "/api/v3/billing/me"),
-        ("post", "/api/v3/billing/checkout"),
+        ("get", "/api/v1/billing/plans"),
+        ("get", "/api/v1/billing/me"),
+        ("post", "/api/v1/billing/checkout"),
     ],
 )
 def test_billing_routes_require_auth(client, method, path):
@@ -68,7 +68,7 @@ def test_list_plans_returns_the_price_list(authed, monkeypatch):
     ]
     monkeypatch.setattr(sub_service, "list_plans", lambda user: plans)
 
-    response = authed.get("/api/v3/billing/plans")
+    response = authed.get("/api/v1/billing/plans")
     assert response.status_code == 200
     body = response.json()
     keys = [t["key"] for t in body["tiers"]]
@@ -93,7 +93,7 @@ def test_my_subscription_default_free(authed, monkeypatch):
             tier=SubscriptionTier.FREE, status="none", current_period_end=None
         ),
     )
-    response = authed.get("/api/v3/billing/me")
+    response = authed.get("/api/v1/billing/me")
     assert response.status_code == 200
     body = response.json()
     assert body["tier"] == "free"
@@ -108,7 +108,7 @@ def test_my_subscription_paid(authed, monkeypatch):
             tier=SubscriptionTier.PREMIUM, status="active", current_period_end=NOW
         ),
     )
-    response = authed.get("/api/v3/billing/me")
+    response = authed.get("/api/v1/billing/me")
     assert response.status_code == 200
     body = response.json()
     assert body["tier"] == "premium"
@@ -125,6 +125,6 @@ def test_checkout_is_503_until_stripe_configured(authed):
     # No Stripe account/keys yet: create_checkout_session raises StripeNotConfiguredError,
     # which the route maps to 503. The surface exists and behaves predictably before go-live.
     response = authed.post(
-        "/api/v3/billing/checkout", json={"tier_key": "standard", "cadence": "monthly"}
+        "/api/v1/billing/checkout", json={"tier_key": "standard", "cadence": "monthly"}
     )
     assert response.status_code == 503

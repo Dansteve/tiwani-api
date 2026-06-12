@@ -4,7 +4,7 @@ The cross-repo contract for the Pulse endpoints (Product.md section 4.7,
 HardRules/Api/Modules/Pulse.md, HardRules/App/Modules/Continuity.md). The app
 mirrors these shapes; the api is the authoritative schema the app reconciles to.
 
-  - PulseSubmission: the POST /api/v3/pulses body. The app posts
+  - PulseSubmission: the POST /api/v1/pulses body. The app posts
     {activity_id, outcome_code} (its api client maps the chosen outcome to
     outcome_code); challenge_dimension is the optional "main challenge" the second
     question captures (the PRD asks both questions, the api stores the dimension
@@ -15,7 +15,7 @@ mirrors these shapes; the api is the authoritative schema the app reconciles to.
   - PulseRecord: the stored pulse as returned. Field-for-field the app's PulseRecord
     (id, activity_id, outcome_code, challenge_dimension, chapter, timestamp), so the
     app renders it without remapping.
-  - PendingPulse: one entry of GET /api/v3/pulses/pending, an activity whose
+  - PendingPulse: one entry of GET /api/v1/pulses/pending, an activity whose
     scheduled Pulse time has passed with no pulse yet (the in-app prompt source).
 
 The outcome vocabulary is the LCI engine's Outcome enum so there is one definition
@@ -31,12 +31,12 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.engines.lci import Outcome
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.seed import Dimension, Tier
 
 
 class PulseSubmission(BaseModel):
-    """The POST /api/v3/pulses body: record the outcome of a prepared activity.
+    """The POST /api/v1/pulses body: record the outcome of a prepared activity.
 
     activity_id is the stored activity_record this Pulse is for; the chapter and the
     recommended tier the LCI adjustment keys on are read from that record, not sent.
@@ -78,7 +78,7 @@ class PulseRecord(BaseModel):
 class PendingPulse(BaseModel):
     """One pending Pulse: an activity whose scheduled Pulse time has passed unanswered.
 
-    The in-app prompt source (GET /api/v3/pulses/pending): the app shows a check-in
+    The in-app prompt source (GET /api/v1/pulses/pending): the app shows a check-in
     card for each. activity_id + activity_name + chapter identify it; scheduled_at is
     when the Pulse became due (activity date + 2h, or 09:00 the next day). The app
     owns the persist-across-opens and dismiss-twice behaviour; the api only reports

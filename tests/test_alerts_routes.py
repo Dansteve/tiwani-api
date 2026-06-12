@@ -60,8 +60,8 @@ def authed(client):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("get", "/api/v3/alerts"),
-        ("post", "/api/v3/alerts/career/dismiss"),
+        ("get", "/api/v1/alerts"),
+        ("post", "/api/v1/alerts/career/dismiss"),
     ],
 )
 def test_alert_routes_require_authentication(client, method, path):
@@ -92,7 +92,7 @@ def test_get_alerts_returns_the_alertview_shape(authed, monkeypatch):
         "list_active_alerts",
         lambda user, child_id=None: [SAMPLE_ALERT],
     )
-    response = authed.get("/api/v3/alerts")
+    response = authed.get("/api/v1/alerts")
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list) and len(body) == 1
@@ -110,13 +110,13 @@ def test_dismiss_unknown_chapter_alert_is_404(authed, monkeypatch):
         raise alerts_service.AlertNotFoundError("none")
 
     monkeypatch.setattr(alerts_routes.alerts_service, "dismiss_alert", _raise)
-    response = authed.post("/api/v3/alerts/career/dismiss")
+    response = authed.post("/api/v1/alerts/career/dismiss")
     assert response.status_code == 404
 
 
 def test_dismiss_rejects_an_unknown_chapter_code_422(authed):
     # The path param is the Chapter enum, so a bogus code is a 422 from validation.
-    response = authed.post("/api/v3/alerts/not-a-chapter/dismiss")
+    response = authed.post("/api/v1/alerts/not-a-chapter/dismiss")
     assert response.status_code == 422
 
 

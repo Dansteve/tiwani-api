@@ -43,7 +43,7 @@ from app.engines.lci import (
     snapshot_score_as_of,
     trajectory,
 )
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.lci import ChapterLci, OverallLci
 from app.models.seed import Tier
 from app.services.profile import _rows, resolve_child_id

@@ -13,32 +13,32 @@ is no unauthenticated surface (unlike the Continuity Card token read). A village
 a REAL account (refinement 4), so they sign in and act attributably.
 
 The routes:
-  POST /api/v3/village/consent                  AUTH, owner. Record per-recipient village
+  POST /api/v1/village/consent                  AUTH, owner. Record per-recipient village
                                                 consent (the Art. 9 gate). Body
                                                 {recipient_id}; the api supplies the
                                                 governed consent text. 403 if not the owner.
-  POST /api/v3/village/needs                     AUTH, owner. Post a need. Body = the
+  POST /api/v1/village/needs                     AUTH, owner. Post a need. Body = the
                                                 what/when/where/contact. 403 if not the
                                                 owner; 409 if no village consent is on
                                                 record for the recipient (route the
                                                 Coordinator to consent first).
-  GET  /api/v3/village/needs?recipient_id=...    AUTH, member. The broadcast list for a
+  GET  /api/v1/village/needs?recipient_id=...    AUTH, member. The broadcast list for a
                                                 recipient (MINIMUM VISIBILITY: summary only,
                                                 no exact location / contact). 403 if not a
                                                 member.
-  GET  /api/v3/village/needs/{need_id}           AUTH, member. One need's detail; the exact
+  GET  /api/v1/village/needs/{need_id}           AUTH, member. One need's detail; the exact
                                                 location + contact are present ONLY for the
                                                 live claimer of this need or the owner
                                                 (per-claim whereabouts). 403 / 404 otherwise.
-  POST /api/v3/village/needs/{need_id}/claim     AUTH, member. Offer to help (ATOMIC
+  POST /api/v1/village/needs/{need_id}/claim     AUTH, member. Offer to help (ATOMIC
                                                 first-wins). 409 if no longer open.
-  POST /api/v3/village/needs/{need_id}/confirm   AUTH, owner. Confirm a claim.
-  POST /api/v3/village/needs/{need_id}/done      AUTH, claimer. Mark done (closes the loop).
-  POST /api/v3/village/needs/{need_id}/drop      AUTH, claimer. Step back (AUTO RE-BROADCAST).
-  POST /api/v3/village/needs/{need_id}/cancel    AUTH, owner. Cancel a need (terminal).
-  GET  /api/v3/village/roster?recipient_id=...   AUTH, member. "Who is in [name]'s village".
+  POST /api/v1/village/needs/{need_id}/confirm   AUTH, owner. Confirm a claim.
+  POST /api/v1/village/needs/{need_id}/done      AUTH, claimer. Mark done (closes the loop).
+  POST /api/v1/village/needs/{need_id}/drop      AUTH, claimer. Step back (AUTO RE-BROADCAST).
+  POST /api/v1/village/needs/{need_id}/cancel    AUTH, owner. Cancel a need (terminal).
+  GET  /api/v1/village/roster?recipient_id=...   AUTH, member. "Who is in [name]'s village".
 
-Registered under /api/v3 in main.py behind the current-user dependency.
+Registered under /api/v1 in main.py behind the current-user dependency.
 """
 
 from typing import List

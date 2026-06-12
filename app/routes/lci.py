@@ -1,17 +1,17 @@
-"""v3 Life Continuity Index routes (the resilience dashboard read endpoints).
+"""v1 Life Continuity Index routes (the resilience dashboard read endpoints).
 
 Thin HTTP only (HardRules/Api/SETUP.md): call the LCI service (which reads the
 stored pulses + snapshots and computes the index via the pure engine), serialize.
 Both routes require the current-user dependency (401 without a valid bearer token);
 the reads are user-scoped through the service with Supabase RLS as the backstop.
 
-Registered under /api/v3 in main.py. The index is computed server-side (section 4.8,
+Registered under /api/v1 in main.py. The index is computed server-side (section 4.8,
 AUTHORITATIVE); the app renders these values and recomputes no average or trajectory.
 
 Endpoints:
-  GET /api/v3/lci/overall   the overall LCI {score|null, trajectory, label,
+  GET /api/v1/lci/overall   the overall LCI {score|null, trajectory, label,
                             chapters_included, timestamp}.
-  GET /api/v3/lci/chapters  the per-chapter LCI list, one per Life Chapter
+  GET /api/v1/lci/chapters  the per-chapter LCI list, one per Life Chapter
                             {chapter, score|null, trajectory, pulse_count, label,
                             timestamp}.
 """

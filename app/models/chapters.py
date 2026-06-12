@@ -5,10 +5,10 @@ Tasks/4.DashboardChapters.md, HardRules/Api/Modules/Dashboard.md). The set of
 Life Chapters is FIXED at six; this module is the single definition of their
 codes and display names, and of the ChapterStatus shape the app mirrors exactly.
 
-Named chapters_v3 (not chapter) on purpose: the pre-v3 prototype already defines
+Named chapters (not chapter) on purpose: the pre-v3 prototype already defines
 a class Chapter in app/models/chapter.py (the "going_well / needs_support" model
-being replaced). This is the v3 surface, alongside app/routes/chapters_v3.py and
-app/services/chapters.py, the way profile_v3 sits beside the prototype profile.
+being replaced). This is the v1 surface, alongside app/routes/chapters.py and
+app/services/chapters.py, the way profile sits beside the prototype profile.
 
 Status colour is NOT computed here. The api returns the raw inputs (the chapter
 LCI if any, the active alert level if any, the last-prepared timestamp, and the

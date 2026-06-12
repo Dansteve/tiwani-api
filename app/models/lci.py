@@ -5,13 +5,13 @@ HardRules/Api/Modules/Index.md, HardRules/App/Modules/Continuity.md). The app
 mirrors these; the api is the authoritative schema. The values are computed in
 app/engines/lci and never recomputed in the app.
 
-  - ChapterLci: GET /api/v3/lci/chapters returns one per Life Chapter for the user.
+  - ChapterLci: GET /api/v1/lci/chapters returns one per Life Chapter for the user.
     Mirrors tiwani-app's ChapterLci (chapter, score, trajectory, pulse_count,
     timestamp) and ADDS two things the app reconciles to: score is NULLABLE (null
     for a chapter with no pulse, rendered "--", not 0), and `label` carries the
     section 4.8 sparse-data label ("building your picture" for 1 to 2 pulses, "--"
     for none, null at 3+ pulses).
-  - OverallLci: GET /api/v3/lci/overall returns the single overall index. Mirrors
+  - OverallLci: GET /api/v1/lci/overall returns the single overall index. Mirrors
     tiwani-app's OverallLciSnapshot (score, trajectory, chapters_included,
     timestamp) and makes score NULLABLE (null until any chapter has a pulse) plus
     the same `label`.
@@ -29,7 +29,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.engines.lci import Trajectory
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 
 # The score bounds the schema validates (section 4.8: 0 to 100). A null score means
 # "no pulse yet" (the chapter or overall is rendered "--"); a present score is a

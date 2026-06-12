@@ -1,4 +1,4 @@
-"""v3 profile, care-recipient, and onboarding routes.
+"""v1 profile, care-recipient, and onboarding routes.
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse and validate, call the profile
 service, serialize. All routes require the current-user dependency (401 if the
@@ -7,20 +7,20 @@ the service, with Supabase RLS as the database backstop. A cross-user access
 attempt returns 404 (the row is invisible under RLS), not a confirmation that it
 exists.
 
-These are the v3 surface, registered under /api/v3 in main.py, sitting alongside
+These are the v1 surface, registered under /api/v1 in main.py, sitting alongside
 the prototype /api/* routes (replaced in later tasks). They use the new
 app/auth dependency and the app/services/profile data layer, not the prototype's
 inline-Supabase routes.
 
 Endpoints:
-  GET  /api/v3/profile     the caller's user_profile (created on first access)
-  PUT  /api/v3/profile     update the caller's profile (partial)
-  POST /api/v3/child       create the caller's care recipient
-  GET  /api/v3/child       the caller's active care recipient (404 if none)
-  GET  /api/v3/children    the caller's OWNED care recipients (owner-only, full profiles)
-  GET  /api/v3/recipients  the switcher list: OWNED + recipients SHARED with the caller, role-tagged
-  PUT  /api/v3/child/{id}  update the caller's care recipient (partial)
-  POST /api/v3/onboarding  the structured onboarding write (once); marks complete
+  GET  /api/v1/profile     the caller's user_profile (created on first access)
+  PUT  /api/v1/profile     update the caller's profile (partial)
+  POST /api/v1/child       create the caller's care recipient
+  GET  /api/v1/child       the caller's active care recipient (404 if none)
+  GET  /api/v1/children    the caller's OWNED care recipients (owner-only, full profiles)
+  GET  /api/v1/recipients  the switcher list: OWNED + recipients SHARED with the caller, role-tagged
+  PUT  /api/v1/child/{id}  update the caller's care recipient (partial)
+  POST /api/v1/onboarding  the structured onboarding write (once); marks complete
 """
 
 from typing import List

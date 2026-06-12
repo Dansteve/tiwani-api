@@ -1,4 +1,4 @@
-"""v3 Shared-Child sharing routes (share a recipient's Continuity Card with another person).
+"""v1 Shared-Child sharing routes (share a recipient's Continuity Card with another person).
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse and validate, call the sharing service
 (which verifies ownership / membership, records consent, mints / redeems / lists / revokes
@@ -12,39 +12,39 @@ returned as a `copy_key`; the api never prints the internal role names.
 The routes, by trust:
 
   OWNER side (the sharing Coordinator; writes are owner-only):
-    POST   /api/v3/sharing/invites
+    POST   /api/v1/sharing/invites
         AUTH. Body {recipient_id, email, role?, subject_kind?}. Verifies the recipient is
         the caller's, records the governed consent, mints the email-bound invite, returns
         {invite_id, token, role, expires_at, copy_key, consent_text}. 404 if the recipient
         is not the caller's. 409 if an ADULT share has no recorded adult consent yet.
-    POST   /api/v3/sharing/consent
+    POST   /api/v1/sharing/consent
         AUTH. Body {recipient_id}. Records an ADULT recipient's own consent (the adult-share
         precondition). 404 if not the caller's recipient.
-    GET    /api/v3/sharing/recipients/{recipient_id}/roster
+    GET    /api/v1/sharing/recipients/{recipient_id}/roster
         AUTH. The visible "who can see [name]'s card" list (active members + pending
         invites). 404 if not the caller's recipient.
-    DELETE /api/v3/sharing/recipients/{recipient_id}/members/{membership_id}
+    DELETE /api/v1/sharing/recipients/{recipient_id}/members/{membership_id}
         AUTH, owner only. Instantly revokes a person's access (soft-revoke; RLS stops
         resolving next request). 404 if not found / not the caller's.
-    DELETE /api/v3/sharing/recipients/{recipient_id}/invites/{invite_id}
+    DELETE /api/v1/sharing/recipients/{recipient_id}/invites/{invite_id}
         AUTH, owner only. Revokes a PENDING invite before redemption. 404 if not found.
 
   REDEEM (the invited person, signed in):
-    POST   /api/v3/sharing/redeem
+    POST   /api/v1/sharing/redeem
         AUTH. Body {token}. Redeems the email-bound token (atomic, email-bound, first-wins)
         and returns which recipient was linked + the first name + the linked-state copy_key.
         400 if the token is unknown / expired / used / revoked / for a different email.
 
   VIEWER side (the person a recipient was shared with):
-    GET    /api/v3/sharing/shared-with-me
+    GET    /api/v1/sharing/shared-with-me
         AUTH. Every recipient shared WITH the caller (first-name-only), each with the
         linked-state copy_key. The entry list to the shared card.
-    GET    /api/v3/sharing/recipients/{recipient_id}/card
+    GET    /api/v1/sharing/recipients/{recipient_id}/card
         AUTH. The CAPPED card read (the CEILING): the SAFE Continuity Card content for a
         recipient the caller is an active member of, plus the linked-state copy_key. 404 if
         the caller is not a member OR there is no live card (never the profile).
 
-Registered under /api/v3 in main.py. Writes are owner-only at the DB (the substrate's
+Registered under /api/v1 in main.py. Writes are owner-only at the DB (the substrate's
 owner-gated RPCs + owner-only update policy) AND re-checked in the service; the card read
 is membership-gated in SQL (get_recipient_card_for_member). Note the path order: the more
 specific /recipients/{id}/roster, /members/{...}, /invites/{...}, /card sit under a

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import app.routes.account_v3 as routes
+import app.routes.account as routes
 import app.services.account as account_service
 from app.auth import AuthedUser, get_current_user_allow_deleted
 
@@ -47,10 +47,10 @@ def authed(client):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("get", "/api/v3/me/export"),
-        ("post", "/api/v3/me/delete"),
-        ("get", "/api/v3/me/account-status"),
-        ("post", "/api/v3/me/reactivate"),
+        ("get", "/api/v1/me/export"),
+        ("post", "/api/v1/me/delete"),
+        ("get", "/api/v1/me/account-status"),
+        ("post", "/api/v1/me/reactivate"),
     ],
 )
 def test_account_routes_require_authentication(client, method, path):
@@ -78,7 +78,7 @@ def test_export_returns_downloadable_json_of_callers_data(authed, monkeypatch):
     }
     monkeypatch.setattr(routes.account_service, "export_account", lambda user: document)
 
-    response = authed.get("/api/v3/me/export")
+    response = authed.get("/api/v1/me/export")
 
     assert response.status_code == 200
     # Downloaded as a file, not rendered inline.
@@ -101,7 +101,7 @@ def test_delete_returns_soft_delete_confirmation(authed, monkeypatch):
         "soft_delete_account",
         lambda user: {"deleted": True, "deleted_at": NOW_ISO},
     )
-    response = authed.post("/api/v3/me/delete")
+    response = authed.post("/api/v1/me/delete")
     assert response.status_code == 200
     body = response.json()
     assert body["deleted"] is True
@@ -116,8 +116,8 @@ def test_delete_is_idempotent_a_second_call_still_confirms(authed, monkeypatch):
         "soft_delete_account",
         lambda user: {"deleted": True, "deleted_at": NOW_ISO},
     )
-    first = authed.post("/api/v3/me/delete")
-    second = authed.post("/api/v3/me/delete")
+    first = authed.post("/api/v1/me/delete")
+    second = authed.post("/api/v1/me/delete")
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json()["deleted"] is True
@@ -132,7 +132,7 @@ def test_closed_account_is_blocked_on_a_normal_route_with_410(authed, monkeypatc
     # A closed account (is_account_deleted True) hitting a NORMAL data route (GET /profile,
     # which depends on get_current_user) is rejected with 410 Gone before the route runs.
     monkeypatch.setattr(account_service, "is_account_deleted", lambda user: True)
-    response = authed.get("/api/v3/profile")
+    response = authed.get("/api/v1/profile")
     assert response.status_code == 410
 
 
@@ -140,7 +140,7 @@ def test_active_account_passes_the_block_on_a_normal_route(authed, monkeypatch):
     # The same route for an ACTIVE account (is_account_deleted False) is NOT blocked; it
     # reaches the route (the profile service is stubbed so no Supabase call is made).
     monkeypatch.setattr(account_service, "is_account_deleted", lambda user: False)
-    import app.routes.profile_v3 as profile_routes
+    import app.routes.profile as profile_routes
 
     profile_row = {
         "id": "u-1",
@@ -154,7 +154,7 @@ def test_active_account_passes_the_block_on_a_normal_route(authed, monkeypatch):
     monkeypatch.setattr(
         profile_routes.profile_service, "get_or_create_profile", lambda user: profile_row
     )
-    response = authed.get("/api/v3/profile")
+    response = authed.get("/api/v1/profile")
     assert response.status_code == 200
 
 
@@ -167,7 +167,7 @@ def test_closed_account_can_still_reach_the_self_service_routes(authed, monkeypa
         "soft_delete_account",
         lambda user: {"deleted": True, "deleted_at": NOW_ISO},
     )
-    response = authed.post("/api/v3/me/delete")
+    response = authed.post("/api/v1/me/delete")
     assert response.status_code == 200
     assert response.json()["deleted"] is True
 
@@ -189,7 +189,7 @@ def test_account_status_returns_the_recovery_window_shape(authed, monkeypatch):
             "reactivatable": True,
         },
     )
-    response = authed.get("/api/v3/me/account-status")
+    response = authed.get("/api/v1/me/account-status")
     assert response.status_code == 200
     body = response.json()
     assert body["deleted"] is True
@@ -212,7 +212,7 @@ def test_account_status_works_for_a_soft_deleted_caller(authed, monkeypatch):
             "reactivatable": True,
         },
     )
-    response = authed.get("/api/v3/me/account-status")
+    response = authed.get("/api/v1/me/account-status")
     assert response.status_code == 200
     assert response.json()["deleted"] is True
 
@@ -228,7 +228,7 @@ def test_account_status_active_account(authed, monkeypatch):
             "reactivatable": False,
         },
     )
-    response = authed.get("/api/v3/me/account-status")
+    response = authed.get("/api/v1/me/account-status")
     assert response.status_code == 200
     body = response.json()
     assert body["deleted"] is False
@@ -245,7 +245,7 @@ def test_reactivate_within_window_returns_reactivated(authed, monkeypatch):
     monkeypatch.setattr(
         routes.account_service, "reactivate_account", lambda user: {"reactivated": True}
     )
-    response = authed.post("/api/v3/me/reactivate")
+    response = authed.post("/api/v1/me/reactivate")
     assert response.status_code == 200
     assert response.json()["reactivated"] is True
 
@@ -257,7 +257,7 @@ def test_reactivate_works_for_a_soft_deleted_caller(authed, monkeypatch):
     monkeypatch.setattr(
         routes.account_service, "reactivate_account", lambda user: {"reactivated": True}
     )
-    response = authed.post("/api/v3/me/reactivate")
+    response = authed.post("/api/v1/me/reactivate")
     assert response.status_code == 200
     assert response.json()["reactivated"] is True
 
@@ -268,5 +268,5 @@ def test_reactivate_past_window_is_410(authed, monkeypatch):
         raise account_service.AccountPurgedError("past window")
 
     monkeypatch.setattr(routes.account_service, "reactivate_account", _raise)
-    response = authed.post("/api/v3/me/reactivate")
+    response = authed.post("/api/v1/me/reactivate")
     assert response.status_code == 410

@@ -20,7 +20,7 @@ user_profile.deleted_at (the data is retained for a 90-day recovery window, not
 hard-deleted; migration 0013). A closed account must be unable to read or write.
 get_current_user is the chokepoint that enforces this: after the token resolves to
 a user, it reads that user's own user_profile.deleted_at under RLS and, if it is
-set, raises 410 Gone. Because every v3 data route depends on get_current_user, a
+set, raises 410 Gone. Because every v1 data route depends on get_current_user, a
 soft-deleted account is blocked everywhere at once (fail-safe: a new route gets the
 block for free). The SELF-SERVICE account routes (GET /me/export, POST /me/delete,
 GET /me/account-status, POST /me/reactivate) must still work for a user acting on
@@ -123,7 +123,7 @@ def get_current_user(
 ) -> AuthedUser:
     """Resolve the current user AND reject a closed (soft-deleted) account with 410.
 
-    The default dependency for every v3 data route. It authenticates via
+    The default dependency for every v1 data route. It authenticates via
     get_current_user_allow_deleted, then reads the caller's OWN user_profile.deleted_at
     under RLS (get_anon_client(user.access_token), so the read can only ever see the
     caller's row). If deleted_at is set, the account has been closed (migration 0013);

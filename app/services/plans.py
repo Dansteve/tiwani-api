@@ -19,7 +19,7 @@ happens here (the route is thin, the engine is pure). This service only fetches
 the inputs, calls run_engine, writes the result, and shapes the PreparationPlan.
 
 READING STORED PLANS BACK (no re-run): list_stored_plans and get_stored_plan serve
-the two READ endpoints (GET /api/v3/plans and GET /api/v3/plans/{activity_id}). They
+the two READ endpoints (GET /api/v1/plans and GET /api/v1/plans/{activity_id}). They
 read the caller's activity_record rows under RLS and return the STORED values, never
 calling run_engine again. get_stored_plan reconstructs the PreparationPlan shape from
 the stored columns (the final scores, total, tier, the JSON strategies, the scheduled
@@ -217,7 +217,7 @@ def list_chapter_activities(chapter: str) -> List[ActivityOption]:
 
 
 # ---------------------------------------------------------------------------
-# reads (GET /api/v3/plans + GET /api/v3/plans/{activity_id})
+# reads (GET /api/v1/plans + GET /api/v1/plans/{activity_id})
 # ---------------------------------------------------------------------------
 
 

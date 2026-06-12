@@ -27,7 +27,7 @@ from typing import Dict, List
 
 from app.engines.alerts.evaluation import AlertLevel
 from app.engines.alerts.guard import assert_clean
-from app.models.chapters_v3 import CHAPTER_DISPLAY_NAMES, Chapter
+from app.models.chapters import CHAPTER_DISPLAY_NAMES, Chapter
 
 # The token the governed prompt substitutes with the chapter's display name. It is
 # the ONLY substitution section 4.9 allows.
@@ -54,7 +54,7 @@ class AlertCopy:
 
     prompt is the verbatim section 4.9 text with [chapter] resolved to the display
     name; action_label is the verbatim CTA; signposts are the chapter's
-    community/statutory resources. This is what GET /api/v3/alerts serializes per
+    community/statutory resources. This is what GET /api/v1/alerts serializes per
     active alert (the app renders it and never authors its own copy).
     """
 

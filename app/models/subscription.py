@@ -8,9 +8,9 @@ the server-side require_entitlement (app/services/entitlements.py); the app read
 these to SHOW the plan/price list and the caller's current tier, never to decide
 access on its own.
 
-  - PlanTier: one tier in the price list (GET /api/v3/billing/plans). Prices are in
+  - PlanTier: one tier in the price list (GET /api/v1/billing/plans). Prices are in
     GBP pence (integer minor units), exactly as stored, so money is never a float.
-  - MySubscription: the caller's own subscription state (GET /api/v3/billing/me):
+  - MySubscription: the caller's own subscription state (GET /api/v1/billing/me):
     tier, status, period end. RLS-scoped to the caller.
   - SubscriptionEvent: the NORMALISED billing event the webhook hands to the service
     after it has verified the Stripe signature and mapped the Stripe object to a user.
@@ -80,6 +80,6 @@ class SubscriptionEvent(BaseModel):
 
 
 class PlanList(BaseModel):
-    """The price-list response wrapper (GET /api/v3/billing/plans)."""
+    """The price-list response wrapper (GET /api/v1/billing/plans)."""
 
     tiers: List[PlanTier]

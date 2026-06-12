@@ -45,9 +45,9 @@ def authed(client):
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v3/strategies/lib-1/suppress",
-        "/api/v3/strategies/lib-1/allow",
-        "/api/v3/strategies/lib-1/dismiss-cross-context?chapter=travel",
+        "/api/v1/strategies/lib-1/suppress",
+        "/api/v1/strategies/lib-1/allow",
+        "/api/v1/strategies/lib-1/dismiss-cross-context?chapter=travel",
     ],
 )
 def test_strategy_routes_require_authentication(client, path):
@@ -67,7 +67,7 @@ def test_suppress_returns_the_updated_item(authed, monkeypatch):
         return SAMPLE_VIEW
 
     monkeypatch.setattr(strategies_routes.strategy_library, "remove_strategy", _remove)
-    response = authed.post("/api/v3/strategies/lib-1/suppress")
+    response = authed.post("/api/v1/strategies/lib-1/suppress")
     assert response.status_code == 200
     body = response.json()
     assert set(body.keys()) == {
@@ -90,7 +90,7 @@ def test_suppress_unknown_item_is_404(authed, monkeypatch):
         raise strategies_routes.strategy_library.StrategyItemNotFoundError("nope")
 
     monkeypatch.setattr(strategies_routes.strategy_library, "remove_strategy", _raise)
-    assert authed.post("/api/v3/strategies/nope/suppress").status_code == 404
+    assert authed.post("/api/v1/strategies/nope/suppress").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ def test_allow_returns_the_updated_item(authed, monkeypatch):
     monkeypatch.setattr(
         strategies_routes.strategy_library, "allow_strategy", lambda user, library_item_id: allowed
     )
-    response = authed.post("/api/v3/strategies/lib-1/allow")
+    response = authed.post("/api/v1/strategies/lib-1/allow")
     assert response.status_code == 200
     assert response.json()["suppressed"] is False
     assert response.json()["removal_count"] == 0
@@ -114,7 +114,7 @@ def test_allow_unknown_item_is_404(authed, monkeypatch):
         raise strategies_routes.strategy_library.StrategyItemNotFoundError("nope")
 
     monkeypatch.setattr(strategies_routes.strategy_library, "allow_strategy", _raise)
-    assert authed.post("/api/v3/strategies/nope/allow").status_code == 404
+    assert authed.post("/api/v1/strategies/nope/allow").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ def test_dismiss_cross_context_forwards_chapter(authed, monkeypatch):
         return SAMPLE_VIEW
 
     monkeypatch.setattr(strategies_routes.strategy_library, "dismiss_cross_context", _dismiss)
-    response = authed.post("/api/v3/strategies/lib-1/dismiss-cross-context?chapter=social")
+    response = authed.post("/api/v1/strategies/lib-1/dismiss-cross-context?chapter=social")
     assert response.status_code == 200
     assert captured == {"id": "lib-1", "chapter": "social"}
 
@@ -139,11 +139,11 @@ def test_dismiss_cross_context_forwards_chapter(authed, monkeypatch):
 def test_dismiss_cross_context_unknown_chapter_is_422(authed):
     # An unknown chapter code fails the Chapter query validation before the service is reached.
     assert (
-        authed.post("/api/v3/strategies/lib-1/dismiss-cross-context?chapter=not-a-chapter").status_code
+        authed.post("/api/v1/strategies/lib-1/dismiss-cross-context?chapter=not-a-chapter").status_code
         == 422
     )
 
 
 def test_dismiss_cross_context_missing_chapter_is_422(authed):
     # chapter is a required query param.
-    assert authed.post("/api/v3/strategies/lib-1/dismiss-cross-context").status_code == 422
+    assert authed.post("/api/v1/strategies/lib-1/dismiss-cross-context").status_code == 422

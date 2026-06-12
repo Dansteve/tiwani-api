@@ -1,12 +1,12 @@
-"""v3 self-service account routes: data export, account closure, reactivation.
+"""v1 self-service account routes: data export, account closure, reactivation.
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse, call the account service, serialize. These
 are the data-rights actions a Coordinator can take on their OWN account:
 
-  GET  /api/v3/me/export          download a JSON document of the caller's own data.
-  POST /api/v3/me/delete          close the caller's account (SOFT delete; data retained 90 days).
-  GET  /api/v3/me/account-status  the caller's closure state + the 90-day recovery window.
-  POST /api/v3/me/reactivate      reopen a soft-deleted account within the 90-day window.
+  GET  /api/v1/me/export          download a JSON document of the caller's own data.
+  POST /api/v1/me/delete          close the caller's account (SOFT delete; data retained 90 days).
+  GET  /api/v1/me/account-status  the caller's closure state + the 90-day recovery window.
+  POST /api/v1/me/reactivate      reopen a soft-deleted account within the 90-day window.
 
 All depend on get_current_user_allow_deleted, NOT get_current_user: they must work for a user
 acting on their own account while it is closed. Export reads the caller's data up to the
@@ -21,7 +21,7 @@ Product.md section 4.11): it sets user_profile.deleted_at and the data is RETAIN
 scrubbed) for 90 days, during which signing back in (POST /me/reactivate) reopens the account.
 At 90 days the data is permanently deleted by a manual/operational purge (no automated job).
 While an account is closed, the soft-delete access block in get_current_user rejects every
-OTHER v3 route with 410, so the closed account can neither read nor write until it reactivates.
+OTHER v1 route with 410, so the closed account can neither read nor write until it reactivates.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ router = APIRouter()
 
 
 class AccountDeletionResult(BaseModel):
-    """The POST /api/v3/me/delete confirmation.
+    """The POST /api/v1/me/delete confirmation.
 
     deleted is always True on success; deleted_at is the server timestamp the account was
     closed at (set/refreshed by this call). The app shows a calm confirmation and signs the
@@ -53,7 +53,7 @@ class AccountDeletionResult(BaseModel):
 
 
 class AccountStatus(BaseModel):
-    """The GET /api/v3/me/account-status payload (the post-login closure check).
+    """The GET /api/v1/me/account-status payload (the post-login closure check).
 
     deleted is True when the account is soft-deleted. deleted_at is when it was closed (null
     if active). hard_delete_due_at is the COMPUTED moment the data becomes due for the manual
@@ -69,7 +69,7 @@ class AccountStatus(BaseModel):
 
 
 class ReactivateResult(BaseModel):
-    """The POST /api/v3/me/reactivate confirmation. reactivated is always True on success.
+    """The POST /api/v1/me/reactivate confirmation. reactivated is always True on success.
 
     Success means the account is live again (or was never closed); the app then proceeds into
     the app. A reactivation past the 90-day window is a 410, not this body.
@@ -112,7 +112,7 @@ def delete_my_account(
     operational purge (no automated job). It does NOT erase the data on the spot. Idempotent:
     a repeat call on an already-closed account refreshes the timestamp and still returns a 200
     confirmation (this route does not apply the closure block, so a second delete is not
-    pre-empted). After this returns, the app signs the user out; every other v3 route then
+    pre-empted). After this returns, the app signs the user out; every other v1 route then
     rejects the closed account with 410 until it reactivates within the window.
     """
     result = account_service.soft_delete_account(user)

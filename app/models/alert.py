@@ -8,11 +8,11 @@ text); the api is the authoritative schema and the only source of the copy.
   - SignpostView: one community/statutory support resource {label, url?}. url is
     null for a contextual resource (e.g. local carer organisations) the app surfaces
     as guidance rather than a single link. Never a clinical referral (section 4.9).
-  - AlertView: one active (non-dismissed) alert as GET /api/v3/alerts returns it:
+  - AlertView: one active (non-dismissed) alert as GET /api/v1/alerts returns it:
     {chapter, level, copy, action_label, signposts}. `copy` is the verbatim section
     4.9 prompt with [chapter] resolved; `level` is 1/2/3 (a higher level replaces a
     lower one upstream, so at most one alert is active per chapter).
-  - DismissResult: the POST /api/v3/alerts/{chapter}/dismiss response, the dismissed
+  - DismissResult: the POST /api/v1/alerts/{chapter}/dismiss response, the dismissed
     alert's chapter + the level that was dismissed.
 
 The stored shape (the DB row) is alert_record (migration 0005): per-chapter active
@@ -27,7 +27,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Literal
 
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 
 # The alert level on the wire is the plain 1/2/3 (the AlertLevel IntEnum's value),
 # matching ChapterStatus.alert_level and the app's expectation.

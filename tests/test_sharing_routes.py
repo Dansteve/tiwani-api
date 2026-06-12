@@ -95,7 +95,7 @@ def authed(client):
 def test_invite_requires_auth(client):
     # No dependency override: the real current-user dep runs and rejects (no token -> 401).
     resp = client.post(
-        "/api/v3/sharing/invites",
+        "/api/v1/sharing/invites",
         json={"recipient_id": "recip-1", "email": "ben@example.com"},
     )
     assert resp.status_code == 401
@@ -113,7 +113,7 @@ def test_invite_happy_path_returns_token_and_governed_copy(authed, monkeypatch):
     monkeypatch.setattr(sharing_service, "invite_viewer", lambda *a, **k: created)
 
     resp = authed.post(
-        "/api/v3/sharing/invites",
+        "/api/v1/sharing/invites",
         json={"recipient_id": "recip-1", "email": "ben@example.com"},
     )
     assert resp.status_code == 201
@@ -132,7 +132,7 @@ def test_invite_unowned_recipient_is_404(authed, monkeypatch):
 
     monkeypatch.setattr(sharing_service, "invite_viewer", _raise)
     resp = authed.post(
-        "/api/v3/sharing/invites",
+        "/api/v1/sharing/invites",
         json={"recipient_id": "not-mine", "email": "ben@example.com"},
     )
     assert resp.status_code == 404
@@ -144,7 +144,7 @@ def test_invite_adult_without_consent_is_409(authed, monkeypatch):
 
     monkeypatch.setattr(sharing_service, "invite_viewer", _raise)
     resp = authed.post(
-        "/api/v3/sharing/invites",
+        "/api/v1/sharing/invites",
         json={
             "recipient_id": "recip-1",
             "email": "ben@example.com",
@@ -160,7 +160,7 @@ def test_redeem_bad_token_is_400(authed, monkeypatch):
         raise sharing_service.InviteRedeemError("expired")
 
     monkeypatch.setattr(sharing_service, "redeem_invite", _raise)
-    resp = authed.post("/api/v3/sharing/redeem", json={"token": "stale"})
+    resp = authed.post("/api/v1/sharing/redeem", json={"token": "stale"})
     assert resp.status_code == 400
 
 
@@ -172,7 +172,7 @@ def test_redeem_happy_path_returns_recipient_and_linked_copy(authed, monkeypatch
         copy_key=sharing_copy.LINKED_COPY_KEY,
     )
     monkeypatch.setattr(sharing_service, "redeem_invite", lambda *a, **k: result)
-    resp = authed.post("/api/v3/sharing/redeem", json={"token": "good"})
+    resp = authed.post("/api/v1/sharing/redeem", json={"token": "good"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["recipient_id"] == "recip-1"
@@ -206,7 +206,7 @@ def test_roster_route_shape_and_copy_keys(authed, monkeypatch):
         ],
     )
     monkeypatch.setattr(sharing_service, "roster", lambda *a, **k: roster)
-    resp = authed.get("/api/v3/sharing/recipients/recip-1/roster")
+    resp = authed.get("/api/v1/sharing/recipients/recip-1/roster")
     assert resp.status_code == 200
     body = resp.json()
     assert body["title_copy_key"] == sharing_copy.ROSTER_TITLE_COPY_KEY
@@ -223,7 +223,7 @@ def test_revoke_member_not_found_is_404(authed, monkeypatch):
         "revoke_access",
         lambda *a, **k: RevokeResult(revoked=False, copy_key=sharing_copy.REVOKED_COPY_KEY),
     )
-    resp = authed.delete("/api/v3/sharing/recipients/recip-1/members/missing")
+    resp = authed.delete("/api/v1/sharing/recipients/recip-1/members/missing")
     assert resp.status_code == 404
 
 
@@ -233,14 +233,14 @@ def test_revoke_member_success(authed, monkeypatch):
         "revoke_access",
         lambda *a, **k: RevokeResult(revoked=True, copy_key=sharing_copy.REVOKED_COPY_KEY),
     )
-    resp = authed.delete("/api/v3/sharing/recipients/recip-1/members/m-1")
+    resp = authed.delete("/api/v1/sharing/recipients/recip-1/members/m-1")
     assert resp.status_code == 200
     assert resp.json()["revoked"] is True
 
 
 def test_shared_card_route_404_when_no_card(authed, monkeypatch):
     monkeypatch.setattr(sharing_service, "read_shared_card", lambda *a, **k: None)
-    resp = authed.get("/api/v3/sharing/recipients/recip-1/card")
+    resp = authed.get("/api/v1/sharing/recipients/recip-1/card")
     assert resp.status_code == 404
 
 
@@ -253,7 +253,7 @@ def test_shared_card_route_returns_safe_content(authed, monkeypatch):
         content=CardContent.model_validate(SAFE_CARD_JSON),
     )
     monkeypatch.setattr(sharing_service, "read_shared_card", lambda *a, **k: card)
-    resp = authed.get("/api/v3/sharing/recipients/recip-1/card")
+    resp = authed.get("/api/v1/sharing/recipients/recip-1/card")
     assert resp.status_code == 200
     body = resp.json()
     # The CEILING: only the safe content; first-name-only, no user_id / child_id surfaced.

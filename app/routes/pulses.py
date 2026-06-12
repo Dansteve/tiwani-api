@@ -1,20 +1,20 @@
-"""v3 Pulse routes (the post-activity check-in).
+"""v1 Pulse routes (the post-activity check-in).
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse and validate, call the pulse service
 (which records the pulse and triggers the LCI recompute), serialize. Every route
 requires the current-user dependency (401 without a valid bearer token); the writes
 are user-scoped through the service with Supabase RLS as the backstop.
 
-Registered under /api/v3 in main.py. The app posts the outcome here; the api records
+Registered under /api/v1 in main.py. The app posts the outcome here; the api records
 it, recomputes the chapter LCI (section 4.8), and (Tasks 7/9) evaluates alerts and
 updates strategy counts.
 
 Endpoints:
-  POST /api/v3/pulses          record a Pulse for an activity {activity_id,
+  POST /api/v1/pulses          record a Pulse for an activity {activity_id,
                                outcome_code, challenge_dimension?}; returns the
                                stored PulseRecord. 404 if the activity is not the
                                caller's; 409 if a Pulse already exists for it.
-  GET  /api/v3/pulses/pending  the activities whose scheduled Pulse time has passed
+  GET  /api/v1/pulses/pending  the activities whose scheduled Pulse time has passed
                                with no pulse yet (the in-app prompt source).
 """
 

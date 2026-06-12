@@ -7,7 +7,7 @@ TIWANI-derived v1 (which was authored from first principles when the companion d
 were not in the repo). The companion docs have since arrived; these are the real
 product scores, strategies, and tiers, copied cell for cell.
 
-For each of the six fixed Life Chapters (the codes from app/models/chapters_v3.Chapter:
+For each of the six fixed Life Chapters (the codes from app/models/chapters.Chapter:
 career, school, family, social, travel, culture) this file carries every scenario row
 from that chapter matrix: the verbatim scenario name, the four base
 {temporal, sensory, logistical, human} scores (each 1 to 5, the X from the doc's
@@ -1288,7 +1288,7 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
 
 
 # All chapters' scenarios in one ordered list (the loader's source of truth). The
-# chapter order matches app/models/chapters_v3.Chapter (School first).
+# chapter order matches app/models/chapters.Chapter (School first).
 ALL_SCENARIOS: List[ScenarioRow] = (
     SCHOOL_SCENARIOS
     + CAREER_SCENARIOS

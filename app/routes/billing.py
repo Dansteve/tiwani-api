@@ -1,13 +1,13 @@
-"""v3 billing + subscription routes.
+"""v1 billing + subscription routes.
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse, call the subscription service / the Stripe
 seam, serialize. The surface behind the subscription feature (Docs/FeatureDecisions.md, the
 Subscription DEFER entry; HardRules/Api/Modules/Subscription.md):
 
-  GET  /api/v3/billing/plans     the price list (active tiers, prices in pence). Auth.
-  GET  /api/v3/billing/me        the caller's own subscription (tier, status, period). Auth.
-  POST /api/v3/billing/checkout  start a Stripe-hosted Checkout (STUBBED -> 503 until keys). Auth.
-  POST /api/v3/billing/webhook   the Stripe webhook: signature-verified, idempotent. No auth.
+  GET  /api/v1/billing/plans     the price list (active tiers, prices in pence). Auth.
+  GET  /api/v1/billing/me        the caller's own subscription (tier, status, period). Auth.
+  POST /api/v1/billing/checkout  start a Stripe-hosted Checkout (STUBBED -> 503 until keys). Auth.
+  POST /api/v1/billing/webhook   the Stripe webhook: signature-verified, idempotent. No auth.
 
 THE TWO TRUST MODELS:
   - The reads + checkout require the Supabase current user (RLS-scoped). A user can SEE the

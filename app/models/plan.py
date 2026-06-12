@@ -6,18 +6,18 @@ these shapes EXACTLY and renders the output; it never recomputes a score (the
 LCE is server-side only). Do not change a field name or type here without changing
 the app's mirror.
 
-  - PreparePlanRequest: what the app posts to POST /api/v3/plans. The activity is
+  - PreparePlanRequest: what the app posts to POST /api/v1/plans. The activity is
     a (chapter, activity_code) pair; today_flags is the section 4.4 "today" flags
     as TG- codes. The app sends the flags; it NEVER applies the +1/+2 itself.
   - PreparationPlan: what the engine returns (the section 4.4 output + the stored
     activity id + the scheduled Pulse time the app shows). The SAME shape is returned
-    by GET /api/v3/plans/{activity_id} reading the STORED activity_record back (no
+    by GET /api/v1/plans/{activity_id} reading the STORED activity_record back (no
     re-run of the engine); dimension_explanations is optional because it is not stored
     (it is null on a stored-plan read, populated on the POST that just ran the engine).
-  - PlanSummary: one row of GET /api/v3/plans (the caller's stored plans, newest
+  - PlanSummary: one row of GET /api/v1/plans (the caller's stored plans, newest
     first): the lightweight identity + score + the pulse status, so the app can list
     "your prepared plans" without fetching each full plan.
-  - ActivityOption: one row of the activity picker (GET /api/v3/chapters/{chapter}
+  - ActivityOption: one row of the activity picker (GET /api/v1/chapters/{chapter}
     /activities): a scenario's code, name, and base tier for the app's list.
 
 The four pressure dimensions and the tier are the engine's (Product.md section
@@ -104,7 +104,7 @@ class DimensionExplanations(BaseModel):
 
 
 class PreparePlanRequest(BaseModel):
-    """The POST /api/v3/plans body: prepare an activity and get its plan.
+    """The POST /api/v1/plans body: prepare an activity and get its plan.
 
     chapter + activity_code select the activity from the seeded scenario matrix; a
     code with no scenario row is a custom activity (the engine falls back to the
@@ -135,8 +135,8 @@ class PreparationPlan(BaseModel):
     scores are an estimate.
 
     dimension_explanations is OPTIONAL because the activity_record does not store it
-    (it is a section 4.4 step 10 derivation, not a stored value): POST /api/v3/plans
-    populates it from the just-run engine, but GET /api/v3/plans/{activity_id} reads
+    (it is a section 4.4 step 10 derivation, not a stored value): POST /api/v1/plans
+    populates it from the just-run engine, but GET /api/v1/plans/{activity_id} reads
     the stored row back and returns it as null (it never re-runs the engine to derive
     it). The app's POST view always receives it; a stored-plan view must allow null.
     """
@@ -157,7 +157,7 @@ class PreparationPlan(BaseModel):
 
 
 class PlanSummary(BaseModel):
-    """One stored plan in the caller's list (GET /api/v3/plans), newest first.
+    """One stored plan in the caller's list (GET /api/v1/plans), newest first.
 
     A lightweight projection of an activity_record so the app can show "your prepared
     plans" without fetching each full plan: the identity (activity_id, chapter,
@@ -167,7 +167,7 @@ class PlanSummary(BaseModel):
     skipped) exists for the activity; pulse_due is true when the scheduled Pulse time
     has passed AND no pulse exists yet (the activity is currently awaiting a check-in).
     A plan with no pulse and a future scheduled time has both false. The full plan is
-    at GET /api/v3/plans/{activity_id}.
+    at GET /api/v1/plans/{activity_id}.
     """
 
     model_config = ConfigDict(use_enum_values=True)
@@ -183,7 +183,7 @@ class PlanSummary(BaseModel):
 
 
 class ActivityOption(BaseModel):
-    """One option in the activity picker (GET /api/v3/chapters/{chapter}/activities).
+    """One option in the activity picker (GET /api/v1/chapters/{chapter}/activities).
 
     A seeded scenario for the chapter: its stable code, human name, and the
     participation tier (the source's tier for the un-adjusted activity), so the app

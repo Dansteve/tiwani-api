@@ -1,6 +1,6 @@
 """Life Chapter dashboard data service (v3).
 
-The thin data layer behind GET /api/v3/chapters. It assembles, per chapter for
+The thin data layer behind GET /api/v1/chapters. It assembles, per chapter for
 the current user, the ChapterStatus inputs the dashboard needs (the chapter LCI,
 the active alert level, the last-prepared timestamp, and the activity count). No
 engine logic and no status-colour mapping live here: this returns raw inputs, the
@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
-from app.models.chapters_v3 import CHAPTER_DISPLAY_NAMES, Chapter, ChapterStatus
+from app.models.chapters import CHAPTER_DISPLAY_NAMES, Chapter, ChapterStatus
 from app.services import alerts as alerts_service
 from app.services import lci as lci_service
 from app.services.profile import _rows, resolve_child_id

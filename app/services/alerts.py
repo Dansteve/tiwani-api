@@ -5,7 +5,7 @@ post-pulse hook: after a Pulse is recorded and the chapter LCI is recomputed
 (app/services/pulse.py), it fetches the chapter's activity_record / pulse_record /
 lci_snapshot history (RLS-scoped), builds the engine's ChapterHistory, calls
 evaluate() (section 4.9, AUTHORITATIVE), and UPSERTs the per-chapter alert_record. It
-also serves GET /api/v3/alerts (the active, non-dismissed alerts with their governed
+also serves GET /api/v1/alerts (the active, non-dismissed alerts with their governed
 copy) and the dismiss endpoint, and supplies the dashboard's per-chapter alert_level.
 
 No threshold logic lives here: the engine owns section 4.9. This service only fetches
@@ -49,7 +49,7 @@ from app.engines.alerts import (
 )
 from app.engines.lci import Outcome
 from app.models.alert import AlertView, DismissResult, SignpostView
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.seed import Tier
 from app.services import lci as lci_service
 from app.services.profile import _first, _rows, resolve_child_id
@@ -123,7 +123,7 @@ def evaluate_chapter_alert_safe(
 
 
 # ---------------------------------------------------------------------------
-# reads (GET /api/v3/alerts + the dashboard wiring)
+# reads (GET /api/v1/alerts + the dashboard wiring)
 # ---------------------------------------------------------------------------
 
 
@@ -175,7 +175,7 @@ def active_levels_by_chapter(user: AuthedUser, child_id: Optional[str] = None) -
 
 
 # ---------------------------------------------------------------------------
-# dismissal (POST /api/v3/alerts/{chapter}/dismiss)
+# dismissal (POST /api/v1/alerts/{chapter}/dismiss)
 # ---------------------------------------------------------------------------
 
 

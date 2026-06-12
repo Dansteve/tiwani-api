@@ -10,7 +10,7 @@ select. These assert the fresh-user baseline, so the six chapters still come bac
 not-started, with no live Supabase (blocked in the sandbox; the task requires
 mocking).
 
-They pin the cross-repo contract for GET /api/v3/chapters: auth required (401),
+They pin the cross-repo contract for GET /api/v1/chapters: auth required (401),
 exactly the six chapters in a stable order, all null/0 for a fresh user, and the
 correct codes + display names. The schema tests pin the ChapterStatus shape and
 the code/name mapping the app mirrors exactly.
@@ -19,7 +19,7 @@ the code/name mapping the app mirrors exactly.
 import pytest
 
 from app.auth import AuthedUser, get_current_user
-from app.models.chapters_v3 import (
+from app.models.chapters import (
     CHAPTER_DISPLAY_NAMES,
     Chapter,
     ChapterStatus,
@@ -84,17 +84,17 @@ def authed(client, monkeypatch):
 def test_chapters_requires_authentication(client):
     # No Authorization header => the current-user dependency raises 401 before any
     # Supabase call (it short-circuits on missing credentials).
-    response = client.get("/api/v3/chapters")
+    response = client.get("/api/v1/chapters")
     assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v3/chapters (fresh user)
+# GET /api/v1/chapters (fresh user)
 # ---------------------------------------------------------------------------
 
 
 def test_chapters_returns_exactly_six(authed):
-    response = authed.get("/api/v3/chapters")
+    response = authed.get("/api/v1/chapters")
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list)
@@ -102,7 +102,7 @@ def test_chapters_returns_exactly_six(authed):
 
 
 def test_chapters_are_in_stable_order_with_correct_codes_and_names(authed):
-    body = authed.get("/api/v3/chapters").json()
+    body = authed.get("/api/v1/chapters").json()
     assert [(c["chapter"], c["display_name"]) for c in body] == EXPECTED_CHAPTERS
 
 
@@ -111,7 +111,7 @@ def test_chapters_are_all_not_started_for_a_fresh_user(authed):
     # chapter is the "not started" baseline: lci/alert_level/last_prepared_at null
     # and activity_count 0. The api returns raw inputs only; the app maps these to
     # grey per section 4.3 (the api never sends a colour).
-    body = authed.get("/api/v3/chapters").json()
+    body = authed.get("/api/v1/chapters").json()
     for chapter in body:
         assert chapter["lci"] is None
         assert chapter["alert_level"] is None
@@ -120,7 +120,7 @@ def test_chapters_are_all_not_started_for_a_fresh_user(authed):
 
 
 def test_chapters_payload_carries_exactly_the_contract_fields(authed):
-    body = authed.get("/api/v3/chapters").json()
+    body = authed.get("/api/v1/chapters").json()
     expected_keys = {
         "chapter",
         "display_name",

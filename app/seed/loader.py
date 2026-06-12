@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from app.engines.alerts.guard import find_prohibited_words
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.seed import (
     CAP_TAG_CONTRIBUTION_PER_DIMENSION,
     MAX_BASE_SCORE,

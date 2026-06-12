@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from app.engines.alerts.guard import assert_clean
 from app.models.card import CardContent, CardStrategy
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.seed import Tier
 
 # The top N strategies shown on the card. The plan stores its full ranked list; the

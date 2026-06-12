@@ -1,4 +1,4 @@
-"""Services: the thin data layer between the v3 routes and Supabase.
+"""Services: the thin data layer between the v1 routes and Supabase.
 
 Routes stay thin (parse, call a service, serialize) per HardRules/Api/SETUP.md.
 DOMAIN logic (scoring, the LCI, alerts) lives in app/engines/; these services are

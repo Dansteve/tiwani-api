@@ -1,17 +1,17 @@
-"""v3 Life Chapter dashboard route.
+"""v1 Life Chapter dashboard route.
 
 Thin HTTP only (HardRules/Api/SETUP.md): parse, call the chapters service,
 serialize. Behind the current-user dependency (401 if the bearer token is missing
 or invalid); the response is user-scoped through the service. This is the api half
 of Task 4 (the six-chapter dashboard, Product.md section 4.3).
 
-Registered under /api/v3 in main.py, so the path is /api/v3/chapters, alongside
-the other v3 routes (profile_v3) and the prototype /api/chapters (the pre-v3
+Registered under /api/v1 in main.py, so the path is /api/v1/chapters, alongside
+the other v1 routes (profile) and the prototype /api/chapters (the pre-v3
 "chapters + triggers + status" routes, replaced in the rebuild). Named
-chapters_v3 to sit beside the prototype app/routes/chapters.py without colliding.
+chapters to sit beside the prototype app/routes/chapters.py without colliding.
 
 Endpoint:
-  GET /api/v3/chapters   the six fixed Life Chapters, each a ChapterStatus, for
+  GET /api/v1/chapters   the six fixed Life Chapters, each a ChapterStatus, for
                          the current user (all "not started" for a fresh user).
 
 The api returns raw inputs only (per chapter: the LCI if any, the active alert
@@ -25,7 +25,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
-from app.models.chapters_v3 import ChapterStatus
+from app.models.chapters import ChapterStatus
 from app.services import chapters as chapters_service
 from app.services import profile as profile_service
 

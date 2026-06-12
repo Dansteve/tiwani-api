@@ -13,7 +13,7 @@ SELF-GRANT FIX (Docs/FeatureDecisions.md, Subscription precondition 2). The
 subscription tier is SERVER-OWNED, not a field a client may set: it is read-only
 on the response (UserProfile) and is NOT a field of the writable surface
 (UserProfileUpdate has no subscription_tier; UserProfileBase, the create/echo
-shape, no longer carries it). A user can therefore not PUT /api/v3/profile
+shape, no longer carries it). A user can therefore not PUT /api/v1/profile
 {"subscription_tier": "premium"} to self-promote: there is no writable field to
 set, and the table has no user write policy on the column (the only writer is the
 billing webhook through the SECURITY DEFINER RPC apply_subscription_event,
@@ -73,7 +73,7 @@ class UserProfileUpdate(BaseModel):
 
     subscription_tier is intentionally ABSENT (the self-grant fix, precondition 2):
     a Coordinator may edit their name and onboarding flag, never their own tier.
-    The PUT /api/v3/profile route builds the update from this model's set fields, so
+    The PUT /api/v1/profile route builds the update from this model's set fields, so
     a client that sends subscription_tier has it dropped (an unknown field is ignored
     by the default model config), and even a forged direct write is refused by RLS
     (no user write policy on the tier column).

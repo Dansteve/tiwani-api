@@ -1,7 +1,7 @@
 """The self-grant fix, proven (Docs/FeatureDecisions.md, Subscription precondition 2).
 
 A user must NOT be able to promote their own subscription tier. The hole was:
-`PUT /api/v3/profile {"subscription_tier": "premium"}` reached an update that the
+`PUT /api/v1/profile {"subscription_tier": "premium"}` reached an update that the
 user_profile RLS UPDATE policy permitted on any column, so a free user could self-promote.
 The fix removes subscription_tier from the writable surface (UserProfileUpdate has no such
 field; UserProfileBase no longer carries it), so the value is dropped before the update is
@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import app.routes.profile_v3 as routes
+import app.routes.profile as routes
 from app.auth import get_current_user
 from app.models.user_profile import UserProfileUpdate
 
@@ -63,7 +63,7 @@ def test_update_model_drops_a_client_supplied_tier():
 
 
 def test_put_profile_cannot_self_promote_tier(authed, monkeypatch):
-    # Drive the real PUT /api/v3/profile route with a self-promotion attempt and capture the
+    # Drive the real PUT /api/v1/profile route with a self-promotion attempt and capture the
     # exact fields handed to the service. The tier must be ABSENT: the service is never asked
     # to write subscription_tier, so a user cannot promote themselves through the api.
     captured = {}
@@ -76,7 +76,7 @@ def test_put_profile_cannot_self_promote_tier(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "update_profile", fake_update_profile)
 
     response = authed.put(
-        "/api/v3/profile",
+        "/api/v1/profile",
         json={"first_name": "Ada", "subscription_tier": "premium"},
     )
 
@@ -100,7 +100,7 @@ def test_put_profile_with_only_a_tier_is_a_no_op_400(authed, monkeypatch):
 
     monkeypatch.setattr(routes.profile_service, "update_profile", fake_update_profile)
 
-    response = authed.put("/api/v3/profile", json={"subscription_tier": "premium"})
+    response = authed.put("/api/v1/profile", json={"subscription_tier": "premium"})
 
     assert response.status_code == 400
     assert called["update"] is False

@@ -135,20 +135,20 @@ def test_every_village_route_requires_authentication(client):
     # No dependency override: the real auth dependency rejects each with 401. Every Hub
     # route is behind auth (there is no unauthenticated surface).
     posts = [
-        ("/api/v3/village/consent", {"recipient_id": RECIP}),
-        ("/api/v3/village/needs", {"recipient_id": RECIP, "title": "x"}),
-        (f"/api/v3/village/needs/{NEED}/claim", None),
-        (f"/api/v3/village/needs/{NEED}/confirm", None),
-        (f"/api/v3/village/needs/{NEED}/done", None),
-        (f"/api/v3/village/needs/{NEED}/drop", None),
-        (f"/api/v3/village/needs/{NEED}/cancel", None),
+        ("/api/v1/village/consent", {"recipient_id": RECIP}),
+        ("/api/v1/village/needs", {"recipient_id": RECIP, "title": "x"}),
+        (f"/api/v1/village/needs/{NEED}/claim", None),
+        (f"/api/v1/village/needs/{NEED}/confirm", None),
+        (f"/api/v1/village/needs/{NEED}/done", None),
+        (f"/api/v1/village/needs/{NEED}/drop", None),
+        (f"/api/v1/village/needs/{NEED}/cancel", None),
     ]
     for path, body in posts:
         assert client.post(path, json=body).status_code == 401, path
     gets = [
-        f"/api/v3/village/needs?recipient_id={RECIP}",
-        f"/api/v3/village/needs/{NEED}",
-        f"/api/v3/village/roster?recipient_id={RECIP}",
+        f"/api/v1/village/needs?recipient_id={RECIP}",
+        f"/api/v1/village/needs/{NEED}",
+        f"/api/v1/village/roster?recipient_id={RECIP}",
     ]
     for path in gets:
         assert client.get(path).status_code == 401, path
@@ -422,7 +422,7 @@ def test_post_need_consent_required_is_409(authed, monkeypatch):
     def boom(*a, **k):
         raise village_service.ConsentRequiredError("village consent not recorded")
     monkeypatch.setattr(village_routes.village_service, "create_need", boom)
-    r = authed.post("/api/v3/village/needs", json={"recipient_id": RECIP, "title": "School run"})
+    r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": "School run"})
     assert r.status_code == 409
 
 
@@ -430,7 +430,7 @@ def test_post_need_not_owner_is_403(authed, monkeypatch):
     def boom(*a, **k):
         raise village_service.NotOwnerError("not the owner")
     monkeypatch.setattr(village_routes.village_service, "create_need", boom)
-    r = authed.post("/api/v3/village/needs", json={"recipient_id": RECIP, "title": "School run"})
+    r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": "School run"})
     assert r.status_code == 403
 
 
@@ -438,7 +438,7 @@ def test_claim_conflict_is_409(authed, monkeypatch):
     def boom(*a, **k):
         raise village_service.NeedConflictError("need is no longer open to claim")
     monkeypatch.setattr(village_routes.village_service, "claim_need", boom)
-    r = authed.post(f"/api/v3/village/needs/{NEED}/claim")
+    r = authed.post(f"/api/v1/village/needs/{NEED}/claim")
     assert r.status_code == 409
     # N3: the route returns GOVERNED, guarded copy, never the raw Postgres RPC message.
     detail = r.json()["detail"]
@@ -450,7 +450,7 @@ def test_claim_not_member_is_403(authed, monkeypatch):
     def boom(*a, **k):
         raise village_service.NotMemberError("not a member")
     monkeypatch.setattr(village_routes.village_service, "claim_need", boom)
-    r = authed.post(f"/api/v3/village/needs/{NEED}/claim")
+    r = authed.post(f"/api/v1/village/needs/{NEED}/claim")
     assert r.status_code == 403
 
 
@@ -458,7 +458,7 @@ def test_done_not_claimer_is_403(authed, monkeypatch):
     def boom(*a, **k):
         raise village_service.NotClaimerError("only the claimer can mark this done")
     monkeypatch.setattr(village_routes.village_service, "complete_need", boom)
-    r = authed.post(f"/api/v3/village/needs/{NEED}/done")
+    r = authed.post(f"/api/v1/village/needs/{NEED}/done")
     assert r.status_code == 403
 
 
@@ -466,7 +466,7 @@ def test_get_need_not_found_is_404(authed, monkeypatch):
     def boom(*a, **k):
         raise village_service.NeedNotFoundError("need not found")
     monkeypatch.setattr(village_routes.village_service, "get_need_detail", boom)
-    r = authed.get(f"/api/v3/village/needs/{NEED}")
+    r = authed.get(f"/api/v1/village/needs/{NEED}")
     assert r.status_code == 404
 
 
@@ -478,7 +478,7 @@ def test_post_need_happy_path_is_201_with_copy_key(authed, monkeypatch):
             message="Shared with the family's village.",
         ),
     )
-    r = authed.post("/api/v3/village/needs", json={"recipient_id": RECIP, "title": "School run"})
+    r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": "School run"})
     assert r.status_code == 201
     body = r.json()
     assert body["status"] == "open"
@@ -496,7 +496,7 @@ def test_list_needs_happy_path_serializes_summaries(authed, monkeypatch):
             )
         ],
     )
-    r = authed.get(f"/api/v3/village/needs?recipient_id={RECIP}")
+    r = authed.get(f"/api/v1/village/needs?recipient_id={RECIP}")
     assert r.status_code == 200
     body = r.json()
     assert body[0]["area_label"] == "North Leeds"
@@ -507,5 +507,5 @@ def test_list_needs_happy_path_serializes_summaries(authed, monkeypatch):
 
 def test_post_need_title_is_required_422(authed):
     # An empty title fails pydantic validation (min_length=1) before the service is reached.
-    r = authed.post("/api/v3/village/needs", json={"recipient_id": RECIP, "title": ""})
+    r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": ""})
     assert r.status_code == 422

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import app.routes.profile_v3 as routes
+import app.routes.profile as routes
 from app.auth import AuthedUser, get_current_user
 
 NOW = datetime(2026, 6, 11, tzinfo=timezone.utc)
@@ -64,13 +64,13 @@ def authed(client):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("get", "/api/v3/profile"),
-        ("put", "/api/v3/profile"),
-        ("post", "/api/v3/child"),
-        ("get", "/api/v3/child"),
-        ("get", "/api/v3/children"),
-        ("put", "/api/v3/child/c-1"),
-        ("post", "/api/v3/onboarding"),
+        ("get", "/api/v1/profile"),
+        ("put", "/api/v1/profile"),
+        ("post", "/api/v1/child"),
+        ("get", "/api/v1/child"),
+        ("get", "/api/v1/children"),
+        ("put", "/api/v1/child/c-1"),
+        ("post", "/api/v1/onboarding"),
     ],
 )
 def test_routes_require_authentication(client, method, path):
@@ -91,7 +91,7 @@ def test_routes_require_authentication(client, method, path):
 
 def test_get_profile_returns_profile(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "get_or_create_profile", lambda user: PROFILE_ROW)
-    response = authed.get("/api/v3/profile")
+    response = authed.get("/api/v1/profile")
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == "u-1"
@@ -109,19 +109,19 @@ def test_update_profile_success(authed, monkeypatch):
     monkeypatch.setattr(
         routes.profile_service, "update_profile", lambda user, fields: updated
     )
-    response = authed.put("/api/v3/profile", json={"onboarding_complete": True})
+    response = authed.put("/api/v1/profile", json={"onboarding_complete": True})
     assert response.status_code == 200
     assert response.json()["onboarding_complete"] is True
 
 
 def test_update_profile_empty_body_is_400(authed):
-    response = authed.put("/api/v3/profile", json={})
+    response = authed.put("/api/v1/profile", json={})
     assert response.status_code == 400
 
 
 def test_update_profile_not_found_is_404(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "update_profile", lambda user, fields: None)
-    response = authed.put("/api/v3/profile", json={"first_name": "Ada"})
+    response = authed.put("/api/v1/profile", json={"first_name": "Ada"})
     assert response.status_code == 404
 
 
@@ -133,7 +133,7 @@ def test_update_profile_not_found_is_404(authed, monkeypatch):
 def test_create_child_success_returns_201(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "create_child", lambda user, fields: CHILD_ROW)
     response = authed.post(
-        "/api/v3/child",
+        "/api/v1/child",
         json={
             "name": "Sam",
             "age_band": "6-8",
@@ -149,25 +149,25 @@ def test_create_child_success_returns_201(authed, monkeypatch):
 
 def test_create_child_rejects_unknown_support_level_422(authed):
     response = authed.post(
-        "/api/v3/child", json={"name": "Sam", "support_level_code": "SL-EXTREME"}
+        "/api/v1/child", json={"name": "Sam", "support_level_code": "SL-EXTREME"}
     )
     assert response.status_code == 422
 
 
 def test_create_child_rejects_unknown_tag_422(authed):
-    response = authed.post("/api/v3/child", json={"name": "Sam", "tags": ["XX-BOGUS"]})
+    response = authed.post("/api/v1/child", json={"name": "Sam", "tags": ["XX-BOGUS"]})
     assert response.status_code == 422
 
 
 def test_create_child_requires_name_422(authed):
-    response = authed.post("/api/v3/child", json={"age_band": "6-8"})
+    response = authed.post("/api/v1/child", json={"age_band": "6-8"})
     assert response.status_code == 422
 
 
 def test_create_child_rejects_single_select_violation_422(authed):
     # Two Recovery tags violates the single-select rule on the create path too.
     response = authed.post(
-        "/api/v3/child", json={"name": "Sam", "tags": ["RC-SHORT", "RC-MOD"]}
+        "/api/v1/child", json={"name": "Sam", "tags": ["RC-SHORT", "RC-MOD"]}
     )
     assert response.status_code == 422
 
@@ -179,14 +179,14 @@ def test_create_child_rejects_single_select_violation_422(authed):
 
 def test_get_child_success(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "get_child", lambda user: CHILD_ROW)
-    response = authed.get("/api/v3/child")
+    response = authed.get("/api/v1/child")
     assert response.status_code == 200
     assert response.json()["name"] == "Sam"
 
 
 def test_get_child_not_found_is_404(authed, monkeypatch):
     monkeypatch.setattr(routes.profile_service, "get_child", lambda user: None)
-    response = authed.get("/api/v3/child")
+    response = authed.get("/api/v1/child")
     assert response.status_code == 404
 
 
@@ -200,7 +200,7 @@ def test_list_children_returns_the_callers_recipients(authed, monkeypatch):
     monkeypatch.setattr(
         routes.profile_service, "list_children", lambda user: [CHILD_ROW, second]
     )
-    response = authed.get("/api/v3/children")
+    response = authed.get("/api/v1/children")
     assert response.status_code == 200
     body = response.json()
     assert [c["id"] for c in body] == ["c-1", "c-2"]
@@ -211,7 +211,7 @@ def test_list_children_empty_is_200_not_404(authed, monkeypatch):
     # Unlike GET /child, "no recipients" is a valid switcher state: a 200 empty list,
     # not a 404. The future app shell reads this to decide whether to prompt onboarding.
     monkeypatch.setattr(routes.profile_service, "list_children", lambda user: [])
-    response = authed.get("/api/v3/children")
+    response = authed.get("/api/v1/children")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -226,13 +226,13 @@ def test_update_child_success(authed, monkeypatch):
     monkeypatch.setattr(
         routes.profile_service, "update_child", lambda user, child_id, fields: updated
     )
-    response = authed.put("/api/v3/child/c-1", json={"name": "Samuel"})
+    response = authed.put("/api/v1/child/c-1", json={"name": "Samuel"})
     assert response.status_code == 200
     assert response.json()["name"] == "Samuel"
 
 
 def test_update_child_empty_body_is_400(authed):
-    response = authed.put("/api/v3/child/c-1", json={})
+    response = authed.put("/api/v1/child/c-1", json={})
     assert response.status_code == 400
 
 
@@ -240,13 +240,13 @@ def test_update_child_not_found_is_404(authed, monkeypatch):
     monkeypatch.setattr(
         routes.profile_service, "update_child", lambda user, child_id, fields: None
     )
-    response = authed.put("/api/v3/child/c-forged", json={"name": "X"})
+    response = authed.put("/api/v1/child/c-forged", json={"name": "X"})
     assert response.status_code == 404
 
 
 def test_update_child_rejects_single_select_violation_422(authed):
     # Two Communication tags violates the single-select rule (SeedData.md).
-    response = authed.put("/api/v3/child/c-1", json={"tags": ["CM-MIXED", "CM-VERBAL"]})
+    response = authed.put("/api/v1/child/c-1", json={"tags": ["CM-MIXED", "CM-VERBAL"]})
     assert response.status_code == 422
 
 
@@ -263,7 +263,7 @@ def test_onboarding_success_returns_profile_and_child(authed, monkeypatch):
         lambda user, payload: {"profile": completed_profile, "child": CHILD_ROW},
     )
     response = authed.post(
-        "/api/v3/onboarding",
+        "/api/v1/onboarding",
         json={
             "name": "Sam",
             "age_band": "6-8",
@@ -280,13 +280,13 @@ def test_onboarding_success_returns_profile_and_child(authed, monkeypatch):
 
 def test_onboarding_requires_support_level_422(authed):
     # support_level_code is required on the onboarding payload (sets the multiplier).
-    response = authed.post("/api/v3/onboarding", json={"name": "Sam", "tags": []})
+    response = authed.post("/api/v1/onboarding", json={"name": "Sam", "tags": []})
     assert response.status_code == 422
 
 
 def test_onboarding_rejects_two_recovery_tags_422(authed):
     response = authed.post(
-        "/api/v3/onboarding",
+        "/api/v1/onboarding",
         json={
             "name": "Sam",
             "support_level_code": "SL-LOW",
@@ -298,7 +298,7 @@ def test_onboarding_rejects_two_recovery_tags_422(authed):
 
 def test_onboarding_rejects_unknown_tag_422(authed):
     response = authed.post(
-        "/api/v3/onboarding",
+        "/api/v1/onboarding",
         json={"name": "Sam", "support_level_code": "SL-LOW", "tags": ["ZZ-NOPE"]},
     )
     assert response.status_code == 422

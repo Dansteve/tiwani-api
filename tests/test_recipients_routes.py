@@ -1,4 +1,4 @@
-"""No-DB tests for GET /api/v3/recipients + the recipients service (the switcher list).
+"""No-DB tests for GET /api/v1/recipients + the recipients service (the switcher list).
 
 Two layers, both off a live Supabase (blocked in the sandbox; the composed reads are faked):
 
@@ -66,7 +66,7 @@ def authed(client):
 
 def test_recipients_requires_auth(client):
     """No bearer -> 401 (the current-user dependency is left real here)."""
-    resp = client.get("/api/v3/recipients")
+    resp = client.get("/api/v1/recipients")
     assert resp.status_code == 401
 
 
@@ -83,7 +83,7 @@ def test_recipients_route_returns_role_tagged_shape(authed, monkeypatch):
         ],
     )
 
-    resp = authed.get("/api/v3/recipients")
+    resp = authed.get("/api/v1/recipients")
     assert resp.status_code == 200
     body = resp.json()
     assert body == [

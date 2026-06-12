@@ -1,4 +1,4 @@
-"""v3 Strategy Library routes (the learning-layer mutations, Product.md section 4.10).
+"""v1 Strategy Library routes (the learning-layer mutations, Product.md section 4.10).
 
 Thin HTTP only (HardRules/Api/SETUP.md): call the strategies service (which reads and writes
 the strategy_library_item rows under RLS), serialize. Every route requires the current-user
@@ -6,7 +6,7 @@ dependency (401 without a valid bearer token; normal current-user, NOT allow-del
 closed account cannot mutate its library); the writes are user-scoped through the service with
 Supabase RLS as the backstop.
 
-Registered under /api/v3 in main.py. The Strategy Library is evaluated server-side: the
+Registered under /api/v1 in main.py. The Strategy Library is evaluated server-side: the
 auto-save, the promotion / suppression, and the cross-context surfacing happen in the plan and
 pulse flows (sections 4.4 / 4.7). These routes are the COordinator's explicit actions on a saved
 strategy: remove it (which suppresses it for its scenario after 3 removals), re-allow a suppressed
@@ -15,14 +15,14 @@ strategy is addressed by its library_item_id (carried on each PlanStrategy in th
 a library_item_id the caller does not own is invisible under RLS and is a 404.
 
 Endpoints:
-  POST /api/v3/strategies/{library_item_id}/suppress
+  POST /api/v1/strategies/{library_item_id}/suppress
         record a removal of the strategy; once removed 3 times for its scenario it is
         suppressed (excluded next time). Returns the updated StrategyItemView. 404 if the item
         is not the caller's.
-  POST /api/v3/strategies/{library_item_id}/allow
+  POST /api/v1/strategies/{library_item_id}/allow
         re-allow a suppressed strategy (clear the marker, reset the removal count). Returns the
         updated StrategyItemView. 404 if not the caller's.
-  POST /api/v3/strategies/{library_item_id}/dismiss-cross-context?chapter=<code>
+  POST /api/v1/strategies/{library_item_id}/dismiss-cross-context?chapter=<code>
         dismiss the strategy's "Also worked in [chapter]" surfacing for one chapter. Returns
         the updated StrategyItemView. 404 if not the caller's; 422 for an unknown chapter code.
 """
@@ -30,7 +30,7 @@ Endpoints:
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 from app.models.strategy import StrategyItemView
 from app.services import strategies as strategy_library
 

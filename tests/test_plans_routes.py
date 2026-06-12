@@ -87,8 +87,8 @@ def authed(client):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("post", "/api/v3/plans"),
-        ("get", "/api/v3/chapters/travel/activities"),
+        ("post", "/api/v1/plans"),
+        ("get", "/api/v1/chapters/travel/activities"),
     ],
 )
 def test_plan_routes_require_authentication(client, method, path):
@@ -111,7 +111,7 @@ def test_create_plan_success_returns_the_plan_shape(authed, monkeypatch):
         lambda user, **kwargs: SAMPLE_PLAN,
     )
     response = authed.post(
-        "/api/v3/plans",
+        "/api/v1/plans",
         json={
             "chapter": "travel",
             "activity_code": "airport-departure-standard",
@@ -157,7 +157,7 @@ def test_create_plan_forwards_the_child_id_query_param(authed, monkeypatch):
 
     monkeypatch.setattr(plans_routes.plans_service, "prepare_plan", _capture)
     response = authed.post(
-        "/api/v3/plans?child_id=c-9",
+        "/api/v1/plans?child_id=c-9",
         json={
             "chapter": "travel",
             "activity_code": "airport-departure-standard",
@@ -179,7 +179,7 @@ def test_create_plan_without_child_id_passes_none(authed, monkeypatch):
 
     monkeypatch.setattr(plans_routes.plans_service, "prepare_plan", _capture)
     response = authed.post(
-        "/api/v3/plans",
+        "/api/v1/plans",
         json={"chapter": "travel", "activity_code": "airport-departure-standard"},
     )
     assert response.status_code == 200
@@ -188,7 +188,7 @@ def test_create_plan_without_child_id_passes_none(authed, monkeypatch):
 
 def test_create_plan_rejects_unknown_chapter_422(authed):
     response = authed.post(
-        "/api/v3/plans",
+        "/api/v1/plans",
         json={"chapter": "not-a-chapter", "activity_code": "x"},
     )
     assert response.status_code == 422
@@ -197,7 +197,7 @@ def test_create_plan_rejects_unknown_chapter_422(authed):
 def test_create_plan_rejects_a_non_tg_today_flag_422(authed):
     # A permanent profile tag (SN-) is not a "today" flag; only TG- codes are valid.
     response = authed.post(
-        "/api/v3/plans",
+        "/api/v1/plans",
         json={
             "chapter": "travel",
             "activity_code": "airport-departure-standard",
@@ -209,7 +209,7 @@ def test_create_plan_rejects_a_non_tg_today_flag_422(authed):
 
 def test_create_plan_rejects_an_unknown_tag_code_422(authed):
     response = authed.post(
-        "/api/v3/plans",
+        "/api/v1/plans",
         json={
             "chapter": "travel",
             "activity_code": "airport-departure-standard",
@@ -225,7 +225,7 @@ def test_create_plan_without_a_care_recipient_is_409(authed, monkeypatch):
 
     monkeypatch.setattr(plans_routes.plans_service, "prepare_plan", _raise)
     response = authed.post(
-        "/api/v3/plans",
+        "/api/v1/plans",
         json={"chapter": "travel", "activity_code": "airport-departure-standard"},
     )
     assert response.status_code == 409
@@ -237,7 +237,7 @@ def test_create_plan_without_a_care_recipient_is_409(authed, monkeypatch):
 
 
 def test_list_activities_returns_seeded_options(authed):
-    response = authed.get("/api/v3/chapters/travel/activities")
+    response = authed.get("/api/v1/chapters/travel/activities")
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list) and len(body) >= 1
@@ -250,7 +250,7 @@ def test_list_activities_returns_seeded_options(authed):
 
 
 def test_list_activities_unknown_chapter_is_404(authed):
-    response = authed.get("/api/v3/chapters/not-a-chapter/activities")
+    response = authed.get("/api/v1/chapters/not-a-chapter/activities")
     assert response.status_code == 404
 
 

@@ -87,7 +87,7 @@ def authed(client):
 
 
 def test_post_cards_requires_authentication(client):
-    response = client.post("/api/v3/cards", json={"activity_id": "act-1"})
+    response = client.post("/api/v1/cards", json={"activity_id": "act-1"})
     assert response.status_code == 401
 
 
@@ -96,7 +96,7 @@ def test_get_card_by_token_needs_no_auth(client, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_by_token", lambda token: SAFE_CONTENT
     )
-    response = client.get("/api/v3/cards/some-token")
+    response = client.get("/api/v1/cards/some-token")
     assert response.status_code == 200
 
 
@@ -116,7 +116,7 @@ def test_post_cards_returns_the_cardcreated_shape(authed, monkeypatch):
         "create_card",
         lambda user, *, activity_id: created,
     )
-    response = authed.post("/api/v3/cards", json={"activity_id": "act-1"})
+    response = authed.post("/api/v1/cards", json={"activity_id": "act-1"})
     assert response.status_code == 201
     body = response.json()
     assert set(body.keys()) == {"content", "token", "expires_at"}
@@ -146,7 +146,7 @@ def test_post_cards_unknown_activity_is_404(authed, monkeypatch):
         raise cards_service.CardActivityNotFoundError("nope")
 
     monkeypatch.setattr(cards_routes.cards_service, "create_card", _raise)
-    response = authed.post("/api/v3/cards", json={"activity_id": "not-mine"})
+    response = authed.post("/api/v1/cards", json={"activity_id": "not-mine"})
     assert response.status_code == 404
 
 
@@ -159,7 +159,7 @@ def test_get_card_by_token_returns_content(client, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_by_token", lambda token: SAFE_CONTENT
     )
-    response = client.get("/api/v3/cards/good-token")
+    response = client.get("/api/v1/cards/good-token")
     assert response.status_code == 200
     body = response.json()
     assert body["child_first_name"] == "Ade"
@@ -170,7 +170,7 @@ def test_get_card_by_token_returns_content(client, monkeypatch):
 def test_get_card_by_invalid_or_expired_token_is_404(client, monkeypatch):
     # The service returns None for an unknown OR expired token; the route maps to 404.
     monkeypatch.setattr(cards_routes.cards_service, "read_card_by_token", lambda token: None)
-    response = client.get("/api/v3/cards/expired-or-unknown")
+    response = client.get("/api/v1/cards/expired-or-unknown")
     assert response.status_code == 404
 
 
@@ -179,7 +179,7 @@ def test_get_card_by_token_never_leaks_pii(client, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_by_token", lambda token: SAFE_CONTENT
     )
-    body = client.get("/api/v3/cards/good-token").json()
+    body = client.get("/api/v1/cards/good-token").json()
     for leaked in ("user_id", "child_id", "activity_id", "token"):
         assert leaked not in body
 
@@ -195,7 +195,7 @@ def test_read_owned_card_returns_content(authed, monkeypatch):
         "read_card_content_by_id",
         lambda user, card_id: SAFE_CONTENT,
     )
-    response = authed.get("/api/v3/cards/card-1/content")
+    response = authed.get("/api/v1/cards/card-1/content")
     assert response.status_code == 200
     assert response.json()["child_first_name"] == "Ade"
 
@@ -204,12 +204,12 @@ def test_read_owned_card_not_found_is_404(authed, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_content_by_id", lambda user, card_id: None
     )
-    assert authed.get("/api/v3/cards/not-mine/content").status_code == 404
+    assert authed.get("/api/v1/cards/not-mine/content").status_code == 404
 
 
 def test_read_owned_card_requires_auth(client):
     # The owner View is auth-gated (401), unlike the public token read.
-    assert client.get("/api/v3/cards/card-1/content").status_code == 401
+    assert client.get("/api/v1/cards/card-1/content").status_code == 401
 
 
 def test_read_card_content_by_id_returns_owned_card(monkeypatch):
@@ -374,7 +374,7 @@ def test_token_read_marks_a_fresh_card_not_stale(monkeypatch):
 
 
 def test_list_cards_requires_authentication(client):
-    response = client.get("/api/v3/cards")
+    response = client.get("/api/v1/cards")
     assert response.status_code == 401
 
 
@@ -391,7 +391,7 @@ def test_list_cards_returns_the_cardsummary_shape(authed, monkeypatch):
         is_stale=False,
     )
     monkeypatch.setattr(cards_routes.cards_service, "list_cards", lambda user: [summary])
-    response = authed.get("/api/v3/cards")
+    response = authed.get("/api/v1/cards")
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list) and len(body) == 1
@@ -486,7 +486,7 @@ def test_list_cards_revoked_takes_precedence_over_expired(monkeypatch):
 
 
 def test_revoke_card_requires_authentication(client):
-    response = client.post("/api/v3/cards/card-1/revoke")
+    response = client.post("/api/v1/cards/card-1/revoke")
     assert response.status_code == 401
 
 
@@ -505,7 +505,7 @@ def test_revoke_card_returns_the_revoked_summary(authed, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "revoke_card", lambda user, card_id: revoked
     )
-    response = authed.post("/api/v3/cards/card-1/revoke")
+    response = authed.post("/api/v1/cards/card-1/revoke")
     assert response.status_code == 200
     body = response.json()
     assert set(body.keys()) == {"card"}
@@ -518,7 +518,7 @@ def test_revoke_card_unknown_card_is_404(authed, monkeypatch):
         raise cards_service.CardNotFoundError("nope")
 
     monkeypatch.setattr(cards_routes.cards_service, "revoke_card", _raise)
-    response = authed.post("/api/v3/cards/not-mine/revoke")
+    response = authed.post("/api/v1/cards/not-mine/revoke")
     assert response.status_code == 404
 
 
@@ -601,7 +601,7 @@ PDF_CONTENT = CardContent(
 
 def test_get_card_pdf_requires_authentication(client):
     # The export is auth-gated (401), like the owner View, unlike the public token read.
-    assert client.get("/api/v3/cards/card-1/pdf").status_code == 401
+    assert client.get("/api/v1/cards/card-1/pdf").status_code == 401
 
 
 def test_get_card_pdf_returns_a_pdf_for_the_owner(authed, monkeypatch):
@@ -614,7 +614,7 @@ def test_get_card_pdf_returns_a_pdf_for_the_owner(authed, monkeypatch):
         "read_card_content_by_id",
         lambda user, card_id: PDF_CONTENT,
     )
-    response = authed.get("/api/v3/cards/card-1/pdf")
+    response = authed.get("/api/v1/cards/card-1/pdf")
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
     assert response.headers["content-disposition"] == (
@@ -640,7 +640,7 @@ def test_get_card_pdf_is_402_when_not_entitled(authed, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_content_by_id", _must_not_be_reached
     )
-    response = authed.get("/api/v3/cards/card-1/pdf")
+    response = authed.get("/api/v1/cards/card-1/pdf")
     assert response.status_code == 402
     assert response.headers["content-type"] != "application/pdf"
 
@@ -652,7 +652,7 @@ def test_get_card_pdf_not_owned_is_404(authed, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_content_by_id", lambda user, card_id: None
     )
-    response = authed.get("/api/v3/cards/not-mine/pdf")
+    response = authed.get("/api/v1/cards/not-mine/pdf")
     assert response.status_code == 404
     assert response.headers["content-type"] != "application/pdf"
 
@@ -671,7 +671,7 @@ def test_get_card_pdf_uses_the_read_by_id_path_with_the_card_id(authed, monkeypa
     monkeypatch.setattr(
         cards_routes.cards_service, "read_card_content_by_id", _capture
     )
-    authed.get("/api/v3/cards/card-xyz/pdf")
+    authed.get("/api/v1/cards/card-xyz/pdf")
     assert seen["card_id"] == "card-xyz"
     assert seen["user"].id == "u-1"
 

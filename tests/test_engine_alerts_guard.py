@@ -25,7 +25,7 @@ from app.engines.alerts import (
 )
 from app.engines.alerts.evaluation import AlertLevel
 from app.engines.alerts.guard import assert_clean
-from app.models.chapters_v3 import Chapter
+from app.models.chapters import Chapter
 
 # The exact governed prohibited list (Product.md section 4.9). Pinned here so a change
 # to the constant is a visible, deliberate edit (and still must clear sign-off).

@@ -40,7 +40,7 @@ from app.engines.strategies import (
     matches_high_dimension,
     qualifies_for_cross_context,
 )
-from app.models.chapters_v3 import CHAPTER_DISPLAY_NAMES, Chapter
+from app.models.chapters import CHAPTER_DISPLAY_NAMES, Chapter
 from app.models.strategy import StrategyItemView
 from app.services.profile import _first, _rows
 
@@ -395,7 +395,7 @@ def apply_pulse_outcome_safe(
 
 
 # ---------------------------------------------------------------------------
-# suppress / re-allow (POST /api/v3/strategies/{id}/suppress | /allow)
+# suppress / re-allow (POST /api/v1/strategies/{id}/suppress | /allow)
 # ---------------------------------------------------------------------------
 
 

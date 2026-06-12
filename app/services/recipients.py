@@ -1,6 +1,6 @@
 """Active care-recipient service (v3): the role-tagged recipient list behind the switcher.
 
-The thin composition layer for GET /api/v3/recipients (Docs/FeatureDecisions.md, the
+The thin composition layer for GET /api/v1/recipients (Docs/FeatureDecisions.md, the
 2026-06-12 "Helper Village ACCESS" entry, refinement 1, the load-bearing security-critical
 fix). It returns the UNION of:
   (a) the recipients the caller OWNS (profile.list_children, role=owner), and
@@ -8,7 +8,7 @@ fix). It returns the UNION of:
 
 so a helper who redeemed an invite (a recipient_membership with no owned child_profile) finally
 reaches the active-recipient plumbing and can open the Village to claim a need. Before this,
-GET /api/v3/children returned only OWNED recipients (.eq("user_id", user.id)), so a member-only
+GET /api/v1/children returned only OWNED recipients (.eq("user_id", user.id)), so a member-only
 helper had an empty switcher, a null active recipient, and a dead-ended Village ("Add the
 person you care for first") -- the live P0 defect.
 
