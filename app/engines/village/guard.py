@@ -39,20 +39,13 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-# CATEGORY 1: clinical words (the same governed set as the Erosion Alert guard,
-# app/engines/alerts/guard.py: kept identical so the non-clinical bar is one bar across
-# the product). Do not soften without the product owner + psychiatrist sign-off.
-_CLINICAL_WORDS = (
-    "symptoms",
-    "diagnosis",
-    "condition",
-    "mental health",
-    "depression",
-    "anxiety disorder",
-    "clinical",
-    "treatment",
-    "therapy",
-)
+# CATEGORY 1: clinical words. The SAME governed set the Erosion Alert guard owns
+# (app/engines/alerts/guard.py): IMPORTED verbatim rather than re-declared, so there is ONE
+# clinical-words authority across the product (root CLAUDE.md). A future addition to the
+# Product.md §4.9 list propagates here automatically (no silent drift). The village guard
+# already matches clinical words as substrings (below), the same semantics as the alert guard.
+# Do not soften without the product owner + psychiatrist sign-off (Task 12).
+from app.engines.alerts.guard import PROHIBITED_WORDS as _CLINICAL_WORDS
 
 # CATEGORY 2: surveillance / monitoring words (the Village Hub decision, refinement 3,
 # verbatim: no "monitor / track / surveillance / case / subject"). "case" and "subject"

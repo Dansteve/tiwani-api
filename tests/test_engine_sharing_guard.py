@@ -82,6 +82,18 @@ def test_sharing_guard_reuses_the_clinical_authority_verbatim():
     assert tuple(PROHIBITED_WORDS) == EXPECTED_CLINICAL + EXPECTED_SHARING_ADDITIONS
 
 
+def test_clinical_suffix_forms_are_caught_on_the_sharing_surface():
+    # N1 (psychiatrist review): clinical words use the SAME substring matcher as the alert
+    # guard, so suffixed forms that a whole-word matcher would miss are caught here too. The
+    # clinical bar on the sharing surface is byte-for-byte the alert-surface bar.
+    assert "clinical" in find_prohibited_words("the room is clinically lit")
+    assert "treatment" in find_prohibited_words("we discussed treatments")
+    assert "condition" in find_prohibited_words("an air-conditioned room")
+    # The surveillance / role-label additions keep the whole-word matcher: an innocent longer
+    # word that merely contains one is NOT a false positive.
+    assert find_prohibited_words("that was a subjective view") == []
+
+
 def test_no_emitted_sharing_string_contains_a_prohibited_word():
     # The whole governed surface: every governed string in both the named and the
     # neutral-fallback forms (all_emitted_strings renders both).

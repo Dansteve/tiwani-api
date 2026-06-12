@@ -30,7 +30,10 @@ from typing import Iterable
 # The clinical-words authority is shared: reuse the alerts/cards list verbatim (one
 # definition, one place). Re-exported here so a reader sees the full prohibited surface
 # the sharing guard enforces.
-from app.engines.alerts.guard import PROHIBITED_WORDS as CLINICAL_PROHIBITED_WORDS
+from app.engines.alerts.guard import (
+    PROHIBITED_WORDS as CLINICAL_PROHIBITED_WORDS,
+    find_prohibited_words as _find_clinical_words,
+)
 
 # The surveillance / role-label words PROHIBITED in Shared-Child copy ON TOP of the
 # clinical list (refinement 7). Matched case-insensitively as substrings, with a word
@@ -82,9 +85,10 @@ def _contains_word(haystack: str, needle: str) -> bool:
     not exist in this copy, and crucially "owner" must catch the standalone role label
     but not be defeated by punctuation). A character is part of a word if it is a letter
     or digit; the needle matches when the characters on each side of an occurrence are
-    NOT word characters (or the string edge). The clinical entries (e.g. "mental health")
-    are multi-word phrases; the same boundary logic handles them (the phrase's outer
-    edges are checked).
+    NOT word characters (or the string edge). Used ONLY for the sharing-specific additions
+    (case/subject/monitor/track/surveillance/viewer/owner); the clinical entries are matched
+    by the canonical alert-guard SUBSTRING matcher instead (see find_prohibited_words), so the
+    clinical bar is identical to the alert surface.
     """
     h = haystack.lower()
     n = needle.lower()
@@ -102,13 +106,19 @@ def _contains_word(haystack: str, needle: str) -> bool:
 
 
 def find_prohibited_words(text: str) -> list[str]:
-    """The prohibited words present in `text` (case-insensitive, whole-word match).
+    """The prohibited words present in `text`, clinical-first then the sharing additions.
 
-    Returns each prohibited entry that appears, in the PROHIBITED_WORDS order (clinical
-    first, then the sharing additions), so a caller (or the guard test) can report
-    exactly what was found. Empty list means the text is clean for the sharing surface.
+    The CLINICAL entries are matched with the canonical alert-guard SUBSTRING matcher
+    (app.engines.alerts.guard.find_prohibited_words), so the clinical bar on the sharing
+    surface is byte-for-byte the SAME bar as on the alert surface: "clinically",
+    "treatments", "conditioned" are caught here exactly as they are there (one list, one
+    matcher). The sharing-specific additions (the surveillance + role-label words) use the
+    whole-word matcher so a banned token does not falsely catch an innocent longer word.
+    Empty list means the text is clean for the sharing surface.
     """
-    return [word for word in PROHIBITED_WORDS if _contains_word(text, word)]
+    clinical = _find_clinical_words(text)
+    sharing = [word for word in SHARING_PROHIBITED_WORDS if _contains_word(text, word)]
+    return clinical + sharing
 
 
 def assert_clean(*texts: str) -> None:

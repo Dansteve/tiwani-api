@@ -63,6 +63,19 @@ def test_prohibited_list_is_exactly_the_governed_set():
     )
 
 
+def test_clinical_list_is_imported_from_the_alert_guard_not_re_typed():
+    # N2 (psychiatrist review): the Hub clinical list must BE the alert guard's governed list
+    # (imported), not a hand-typed copy, so a future addition to the Product.md §4.9 list
+    # propagates here automatically and cannot silently drift out of date (one clinical-words
+    # authority across the product, per root CLAUDE.md).
+    from app.engines.alerts.guard import PROHIBITED_WORDS as ALERT_CLINICAL
+    from app.engines.village.guard import _CLINICAL_WORDS as VILLAGE_CLINICAL
+
+    assert VILLAGE_CLINICAL is ALERT_CLINICAL, (
+        "the Village clinical list must be the imported alert PROHIBITED_WORDS, not a re-typed copy"
+    )
+
+
 def test_no_emitted_hub_string_contains_a_prohibited_word():
     # The whole governed surface: every copy-key rendered with a name and the neutral
     # fallback.
