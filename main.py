@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3
+from app.routes import profile_v3, chapters_v3, plans, pulses, lci, alerts, cards, account_v3, billing
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -56,6 +56,14 @@ app.include_router(cards.router, prefix="/api/v3", tags=["v3 Continuity Card"])
 # OTHER v3 route rejects a closed account with 410 (the soft-delete block in
 # get_current_user). Registered under /api/v3 behind the current-user dependency.
 app.include_router(account_v3.router, prefix="/api/v3", tags=["v3 Account (export & delete)"])
+# Subscription + billing (Docs/FeatureDecisions.md, the Subscription DEFER entry): the price
+# list and the caller's own subscription (auth, RLS-scoped reads), a STUBBED checkout, and the
+# Stripe webhook. The webhook is the ONLY writer of subscription state and authenticates by
+# STRIPE SIGNATURE (not a Supabase session), writing through the SECURITY DEFINER RPC
+# (migration 0014, PENDING OWNER APPLY) idempotently on the Stripe event id. The live Stripe
+# SDK calls are STUBBED (PENDING OWNER STRIPE KEYS); the entitlement gate
+# (app/services/entitlements.py) is the one server-side allowlist gate for paid features.
+app.include_router(billing.router, prefix="/api/v3", tags=["v3 Subscription & Billing"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.

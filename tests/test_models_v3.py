@@ -38,17 +38,48 @@ def test_user_profile_create_requires_first_name():
 
 def test_user_profile_create_defaults_match_migration():
     profile = UserProfileCreate(id="u-1", email="a@example.com", first_name="Ada")
-    # Defaults mirror the table: subscription_tier 'free', onboarding_complete false.
-    assert profile.subscription_tier == SubscriptionTier.FREE
-    assert profile.subscription_tier.value == "free"
+    # Defaults mirror the table: onboarding_complete false. subscription_tier is NOT a
+    # field of the create shape any more (the self-grant fix, FeatureDecisions
+    # precondition 2): the tier is server-owned and starts 'free' via the DB column
+    # default, never something the sign-up caller sets.
     assert profile.onboarding_complete is False
+    assert not hasattr(profile, "subscription_tier")
 
 
-def test_user_profile_rejects_unknown_subscription_tier():
+def test_user_profile_create_ignores_a_client_supplied_tier():
+    # A client cannot smuggle a tier in through create: subscription_tier is not a
+    # field of UserProfileCreate, so (with the default model config) it is dropped,
+    # not honoured. The created shape never carries a client-chosen tier.
+    profile = UserProfileCreate(
+        id="u-1", email="a@example.com", first_name="Ada", subscription_tier="premium"
+    )
+    assert not hasattr(profile, "subscription_tier")
+
+
+def test_user_profile_response_rejects_unknown_subscription_tier():
+    # The tier lives on the read-only response shape; an out-of-enum value is still
+    # rejected there (the value only ever comes from the DB row, which is constrained).
+    now = datetime.now(timezone.utc)
     with pytest.raises(ValidationError):
-        UserProfileCreate(
-            id="u-1", email="a@example.com", first_name="Ada", subscription_tier="enterprise"
+        UserProfile(
+            id="u-1",
+            email="a@example.com",
+            first_name="Ada",
+            subscription_tier="enterprise",
+            created_at=now,
+            updated_at=now,
         )
+
+
+def test_user_profile_update_has_no_tier_field():
+    # The self-grant fix (precondition 2): a Coordinator may edit name + onboarding,
+    # never their own tier. subscription_tier is not a field of the update shape, and a
+    # client that sends one has it dropped (not applied) when the route builds the update.
+    fields = UserProfileUpdate(
+        first_name="Ada", subscription_tier="premium"
+    ).model_dump(exclude_unset=True)
+    assert "subscription_tier" not in fields
+    assert fields == {"first_name": "Ada"}
 
 
 def test_user_profile_update_is_all_optional():
