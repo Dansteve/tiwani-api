@@ -1,17 +1,33 @@
+import logging
+
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.config import settings
 from app.routes import (
     profile, chapters, plans, pulses, lci, alerts, cards, account,
     strategies, sharing, village, billing,
 )
 
+logger = logging.getLogger(__name__)
+
+# The single governed fallback for a truly-unexpected, otherwise-uncaught error. Calm,
+# non-clinical, no internals (Product.md section 4.9 posture): the client never sees the
+# exception text or a traceback, only this. The real exception is logged server-side.
+# FLAG: this is a user-facing string; it may want copy review.
+GENERIC_ERROR_DETAIL = "Something went wrong on our end. Please try again."
+
+# NOTE: debug is deliberately NOT set from settings.DEBUG. FastAPI's debug flag makes
+# Starlette's ServerErrorMiddleware render an interactive traceback on an unhandled 500
+# (bypassing the governed handler below), which would leak internals to the client even in
+# dev. Leaving it False keeps that middleware routing every unhandled 500 to the governed
+# handler in all environments. The dev autoreload still uses settings.DEBUG (see uvicorn.run
+# at the bottom); the two are independent.
 app = FastAPI(
     title=settings.APP_NAME,
     description="FastAPI Backend for Tiwani App, integrated with Supabase",
     version="1.0.0",
-    debug=settings.DEBUG,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json"
@@ -26,6 +42,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global catch-all for an UNHANDLED exception at the app boundary. FastAPI's own handlers
+# already shape the typed 4xx paths the routes raise (HTTPException -> {"detail": ...},
+# RequestValidationError -> 422); this handler is NOT registered for those, so it does not
+# change any existing 4xx response. It fires ONLY for a truly-unexpected error that no route
+# caught (an uncaught Supabase APIError, the village _rpc unknown-SQLSTATE re-raise, any bug),
+# turning what would otherwise be a raw 500 (a leaked traceback) into a clean governed
+# response: the same {"detail": ...} body shape the routes use, a fixed non-clinical message,
+# and NO exception text, traceback, or internals. The real exception is logged server-side
+# (logger.exception captures the traceback) so debugging is unaffected.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": GENERIC_ERROR_DETAIL},
+    )
+
 
 # v1 surface (clean rebuild, Docs/Decisions.md D2): profile, care recipient,
 # onboarding, and the six-chapter dashboard, behind the Supabase-Auth current-user
