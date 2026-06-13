@@ -13,8 +13,10 @@ with a clean store per test. The card route's Supabase call is mocked so the tes
 import json
 
 import pytest
+from pydantic import BaseModel
 from starlette.requests import Request
 
+import main
 from app.rate_limit import (
     client_ip,
     limiter,
@@ -31,13 +33,32 @@ def make_request(headers=None, client=("1.2.3.4", 9999)) -> Request:
     return Request(scope)
 
 
+# A decorated probe route returning a Pydantic model, registered once, to guard BLOCKER 1: with
+# headers_enabled wrongly ON, slowapi injects X-RateLimit-* into the model return and 500s a route
+# with no `response` param (the real card / redeem / mint happy path).
+class _RlProbe(BaseModel):
+    ok: bool
+
+
+@main.app.get("/_rl_probe", response_model=_RlProbe)
+@limiter.limit("5/minute")
+def _rl_probe_route(request: Request) -> _RlProbe:
+    return _RlProbe(ok=True)
+
+
 # --- the key functions (pure) ---------------------------------------------------------------------
 
-def test_client_ip_prefers_the_leftmost_forwarded_for():
-    # Behind the Render / Cloud Run proxy the real client is the leftmost X-Forwarded-For entry, NOT
-    # the socket (which is the load balancer).
+def test_client_ip_uses_the_rightmost_xff_not_the_forgeable_leftmost():
+    # The trusted proxy APPENDS the real IP, so the rightmost entry is proxy-written; the
+    # leftmost is whatever the client typed (evadable + a lockout vector). We key on the rightmost.
     req = make_request({"x-forwarded-for": "9.9.9.9, 10.0.0.1"}, client=("127.0.0.1", 1))
-    assert client_ip(req) == "9.9.9.9"
+    assert client_ip(req) == "10.0.0.1"
+
+
+def test_client_ip_prefers_cf_connecting_ip_over_xff():
+    # The prod path is behind Cloudflare; CF-Connecting-IP is edge-set and not client-forgeable.
+    req = make_request({"cf-connecting-ip": "1.1.1.1", "x-forwarded-for": "forged, 2.2.2.2"})
+    assert client_ip(req) == "1.1.1.1"
 
 
 def test_client_ip_falls_back_to_the_socket_without_forwarded_for():
@@ -127,3 +148,22 @@ def test_the_global_default_throttles_even_an_undecorated_route(client, limited)
     for _ in range(120):
         assert client.get("/health", headers=headers).status_code == 200
     assert client.get("/health", headers=headers).status_code == 429
+
+
+def test_a_decorated_route_returning_a_model_does_not_500_under_the_limiter(client, limited):
+    # BLOCKER guard: headers_enabled=True made slowapi inject headers into a model return -> a 500
+    # on every SUCCESS (card / redeem / mint). With it off, a decorated model route 200s.
+    r = client.get("/_rl_probe", headers={"X-Forwarded-For": "8.8.8.8"})
+    assert r.status_code == 200, f"decorated model route 500'd under the limiter ({r.status_code})"
+    assert r.json() == {"ok": True}
+
+
+def test_a_forged_rotating_leftmost_xff_does_not_get_a_fresh_budget(client, limited, monkeypatch):
+    # BLOCKER guard: rotating the LEFTMOST X-Forwarded-For must NOT evade the per-IP limit. We
+    # key on the rightmost (proxy-written), so a constant rightmost is one budget; the 21st is 429.
+    _mock_card_lookup(monkeypatch)
+    for i in range(20):
+        h = {"X-Forwarded-For": f"66.66.{i}.{i}, 10.0.0.9"}  # forged leftmost rotates
+        assert client.get("/api/v1/cards/x", headers=h).status_code == 404
+    last = {"X-Forwarded-For": "66.66.99.99, 10.0.0.9"}
+    assert client.get("/api/v1/cards/x", headers=last).status_code == 429

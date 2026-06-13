@@ -26,16 +26,23 @@ from app.config import settings
 
 
 def client_ip(request: Request) -> str:
-    """The real client IP behind the proxy: the leftmost X-Forwarded-For, else the socket.
+    """The real client IP, edge-enforced, never a client-forgeable value.
 
-    We trust one proxy hop (Render / Cloud Run). Without this the key would be the
-    load-balancer IP for every request, so the limit would be useless or lock everyone out.
+    The prod path is behind Cloudflare AND the Render / Cloud Run load balancer (two hops), so
+    prefer CF-Connecting-IP (Cloudflare sets it at the edge; a client cannot forge it). Else the
+    RIGHTMOST X-Forwarded-For entry, which our trusted proxy appended, NOT the leftmost (which is
+    whatever the client typed, so evadable + a victim-lockout vector). Else the socket. If the
+    deploy ever fronts the api without Cloudflare or with more trusted hops, restrict trust at the
+    edge (uvicorn --proxy-headers --forwarded-allow-ips, or a Cloudflare-CIDR allowlist on CF-IP).
     """
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf:
+        return cf
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]  # rightmost: written by our trusted proxy, not client-forgeable
     return get_remote_address(request)
 
 
@@ -51,13 +58,15 @@ def token_key(request: Request) -> str:
 
 
 # The single app limiter. default_limits apply to EVERY route (the global safety net); the
-# per-route @limiter.limit decorators add the strict limits on top. headers_enabled adds the
-# X-RateLimit-* headers.
+# per-route @limiter.limit decorators add the strict limits on top. headers_enabled is OFF on
+# purpose: with it ON, slowapi injects X-RateLimit-* into the route's RETURN value, which 500s a
+# route that returns a Pydantic model with no `response` param (the card / redeem / mint happy
+# path). The Retry-After on the governed 429 carries the only client-actionable hint we need.
 limiter = Limiter(
     key_func=client_ip,
     default_limits=["120/minute"],
     storage_uri=settings.RATE_LIMIT_STORAGE_URI,
-    headers_enabled=True,
+    headers_enabled=False,
 )
 
 # The strict per-route limits, named so the routes and the tests share one source of truth.
