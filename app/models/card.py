@@ -106,6 +106,9 @@ class CardContent(BaseModel):
     freshness_note: Optional[str] = None
     generated_at: Optional[datetime] = None
     is_stale: bool = False
+    # The owner-chosen public-card label (an initial / nickname / first name) or None for no
+    # name; public_safe_content uses it on the public link. See Api/Modules/Cards.md.
+    public_label: Optional[str] = None
 
 
 class CreateCardRequest(BaseModel):
@@ -115,9 +118,15 @@ class CreateCardRequest(BaseModel):
     service verifies the activity belongs to the caller (RLS-scoped) before generating
     the card; an activity the caller does not own is a 404 (we do not confirm it
     exists).
+
+    public_name is the OPTIONAL owner-chosen label to show on the PUBLIC share card (an
+    initial, a nickname, or the first name): the safe default is None = NO name on the
+    unauthenticated link (Docs/FeatureDecisions.md 2026-06-13). Capped short; the builder
+    guards it like every other helper-facing string.
     """
 
     activity_id: str = Field(..., min_length=1)
+    public_name: Optional[str] = Field(default=None, max_length=24)
 
 
 class CardCreated(BaseModel):

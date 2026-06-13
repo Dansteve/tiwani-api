@@ -23,6 +23,7 @@ from app.engines.cards import (
     build_card_content,
     build_freshness_note,
     first_name_only,
+    public_safe_content,
 )
 
 
@@ -212,3 +213,109 @@ def test_build_card_defaults_generated_at_when_not_given():
     content = build_card_content(_activity(), "Ade")
     assert content.generated_at is not None
     assert content.freshness_note
+
+
+# ---------------------------------------------------------------------------
+# public_safe_content: the PUBLIC (unauthenticated) card strips the recipient's NAME
+# ---------------------------------------------------------------------------
+
+
+def test_public_safe_content_removes_the_name_everywhere():
+    # The public token card must carry NO recipient name. Build a card with a real name,
+    # then strip it: the name appears in no field, and the heading is the neutral label.
+    full = build_card_content(_activity(), "Ade Bello")
+    assert "Ade" in full.model_dump_json()  # the name IS there before stripping
+    safe = public_safe_content(full)
+    blob = safe.model_dump_json()
+    assert "Ade" not in blob and "Bello" not in blob
+    assert safe.child_first_name == "this child"
+    # The four name-bearing fields become the neutral, pronoun copy; none names the child.
+    assert "Ade" not in safe.intro
+    assert "Ade" not in safe.if_difficult
+    assert "Ade" not in safe.safety_note
+
+
+def test_public_safe_content_leaves_the_non_name_fields_unchanged():
+    full = build_card_content(_activity(), "Ade Bello")
+    safe = public_safe_content(full)
+    # Everything that never carried the name is preserved exactly.
+    assert safe.activity_name == full.activity_name
+    assert safe.chapter == full.chapter
+    assert safe.tier == full.tier
+    assert safe.tier_label == full.tier_label
+    assert safe.strategies == full.strategies
+    assert safe.freshness_note == full.freshness_note
+    assert safe.generated_at == full.generated_at
+    assert safe.is_stale == full.is_stale
+
+
+@pytest.mark.parametrize(
+    "tier,fragment",
+    [
+        ("Full", "usually comfortable with this"),
+        ("Modified", "join in well with a little support"),
+        ("Pivot", "a big ask for them"),
+    ],
+)
+def test_public_safe_content_intro_matches_the_tier(tier, fragment):
+    # The neutral intro is the de-named version of the SAME tier's intro (meaning preserved).
+    full = build_card_content(_activity(tier=tier), "Ade Bello")
+    safe = public_safe_content(full)
+    assert fragment in safe.intro
+    assert "Ade" not in safe.intro
+
+
+def test_public_safe_content_copy_passes_the_shared_guard():
+    # The neutral public copy is fixed governed copy: it must pass the shared non-clinical
+    # guard (screened here in CI, never at request time), like every other card string. A
+    # banned word would raise ProhibitedWordError; a clean pass returns without raising.
+    from app.engines.alerts.guard import assert_clean
+
+    safe = public_safe_content(build_card_content(_activity(), "Ade"))
+    assert_clean(safe.child_first_name, safe.intro, safe.if_difficult, safe.safety_note)
+
+
+# ---------------------------------------------------------------------------
+# the opt-in public label (the owner's alias chooser): public_name -> public_label
+# ---------------------------------------------------------------------------
+
+
+def test_build_card_bakes_an_owner_public_label_when_given():
+    # The owner opts in to a public label (an initial / nickname / first name): it is stored
+    # as public_label, while child_first_name still holds the real first name for the owner
+    # and member views (those surfaces are not name-stripped).
+    content = build_card_content(_activity(), "Ade Bello", public_name="A.")
+    assert content.public_label == "A."
+    assert content.child_first_name == "Ade"
+
+
+def test_build_card_public_label_is_none_by_default():
+    # No public_name -> no public label -> the public card stays name-free (the safe default).
+    assert build_card_content(_activity(), "Ade Bello").public_label is None
+
+
+def test_build_card_public_label_is_trimmed_and_blank_becomes_none():
+    assert build_card_content(_activity(), "Ade", public_name="  Junior  ").public_label == "Junior"
+    assert build_card_content(_activity(), "Ade", public_name="   ").public_label is None
+
+
+def test_build_card_guards_a_prohibited_word_in_the_public_label():
+    # The owner's public label is user text shown on a public card, so it is guarded like
+    # every other helper-facing string: a clinical word trips the shared guard.
+    with pytest.raises(ProhibitedWordError):
+        build_card_content(_activity(), "Ade", public_name="diagnosis")
+
+
+def test_public_safe_content_uses_the_owner_label_when_set():
+    # When the owner opted in, the PUBLIC card heading shows the label (not "this child"),
+    # the real name is still stripped, and the body copy stays pronoun-based (an initial
+    # reads oddly mid-sentence, so the label is heading-only).
+    safe = public_safe_content(build_card_content(_activity(), "Ade Bello", public_name="A."))
+    assert safe.child_first_name == "A."
+    assert "Ade" not in safe.model_dump_json()
+    assert "A. is usually" not in safe.intro
+
+
+def test_public_safe_content_falls_back_to_neutral_without_a_label():
+    safe = public_safe_content(build_card_content(_activity(), "Ade Bello"))
+    assert safe.child_first_name == "this child"

@@ -76,7 +76,9 @@ def create_card(
     invisible under RLS; we do not confirm it exists). 401 without a valid token.
     """
     try:
-        return cards_service.create_card(user, activity_id=payload.activity_id)
+        return cards_service.create_card(
+            user, activity_id=payload.activity_id, public_name=payload.public_name
+        )
     except cards_service.CardActivityNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
-from app.engines.cards import build_card_content, build_freshness_note
+from app.engines.cards import build_card_content, build_freshness_note, public_safe_content
 from app.models.card import CardContent, CardCreated, CardStatus, CardSummary
 from app.services.profile import _first, _rows
 from app.services.timestamps import parse_timestamptz
@@ -97,7 +97,11 @@ class CardNotFoundError(Exception):
 
 
 def create_card(
-    user: AuthedUser, *, activity_id: str, now: Optional[datetime] = None
+    user: AuthedUser,
+    *,
+    activity_id: str,
+    public_name: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> CardCreated:
     """Create a Continuity Card for the caller's activity, return content + token + expiry.
 
@@ -125,7 +129,9 @@ def create_card(
     # base_now is the card's prepared moment: it anchors the freshness note's date and is
     # carried into the stored content as generated_at, so the prepared date the helper
     # reads matches the card_record.created_at the list reports.
-    content = build_card_content(activity, child_name, generated_at=base_now)
+    content = build_card_content(
+        activity, child_name, generated_at=base_now, public_name=public_name
+    )
 
     token = secrets.token_urlsafe(CARD_TOKEN_BYTES)
     expires_at = base_now + timedelta(days=CARD_VALIDITY_DAYS)
@@ -165,7 +171,12 @@ def read_card_by_token(token: str, *, now: Optional[datetime] = None) -> Optiona
     if not data:
         return None
     content = CardContent.model_validate(data)
-    return _with_freshness(content, now=now)
+    # Strip the recipient's NAME for the PUBLIC card: this token read is the ONLY
+    # unauthenticated card surface, so the name must not ride on the share link
+    # (Docs/FeatureDecisions.md 2026-06-13, the safe-default-first decision). The owner +
+    # member-shared card paths do not pass through here, so they keep the first name. Applied
+    # on the way out; the stored row is never mutated, so existing and new cards are covered.
+    return public_safe_content(_with_freshness(content, now=now))
 
 
 def read_card_content_by_id(

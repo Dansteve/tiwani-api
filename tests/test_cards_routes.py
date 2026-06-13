@@ -114,7 +114,7 @@ def test_post_cards_returns_the_cardcreated_shape(authed, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service,
         "create_card",
-        lambda user, *, activity_id: created,
+        lambda user, *, activity_id, public_name=None: created,
     )
     response = authed.post("/api/v1/cards", json={"activity_id": "act-1"})
     assert response.status_code == 201
@@ -137,17 +137,37 @@ def test_post_cards_returns_the_cardcreated_shape(authed, monkeypatch):
         "freshness_note",
         "generated_at",
         "is_stale",
+        "public_label",
     }
     assert content["child_first_name"] == "Ade"
 
 
 def test_post_cards_unknown_activity_is_404(authed, monkeypatch):
-    def _raise(user, *, activity_id):
+    def _raise(user, *, activity_id, public_name=None):
         raise cards_service.CardActivityNotFoundError("nope")
 
     monkeypatch.setattr(cards_routes.cards_service, "create_card", _raise)
     response = authed.post("/api/v1/cards", json={"activity_id": "not-mine"})
     assert response.status_code == 404
+
+
+def test_post_cards_passes_the_owner_public_name_to_the_service(authed, monkeypatch):
+    # The opt-in alias chooser: the app sends public_name on create; the route threads it to
+    # the service (which bakes it into public_label for the public card). Default is None.
+    seen = {}
+
+    def _create(user, *, activity_id, public_name=None):
+        seen["public_name"] = public_name
+        return CardCreated(
+            content=SAFE_CONTENT, token="t", expires_at="2026-07-20T12:00:00+00:00"
+        )
+
+    monkeypatch.setattr(cards_routes.cards_service, "create_card", _create)
+    authed.post("/api/v1/cards", json={"activity_id": "act-1", "public_name": "A."})
+    assert seen["public_name"] == "A."
+    # Omitted -> the service receives None (the safe default: no name on the public card).
+    authed.post("/api/v1/cards", json={"activity_id": "act-1"})
+    assert seen["public_name"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +331,11 @@ def test_read_card_by_token_returns_content_for_a_live_token(monkeypatch):
 
     content = cards_service.read_card_by_token("live-token")
     assert content is not None
-    assert content.child_first_name == "Ade"
+    # The PUBLIC token read is the only UNAUTHENTICATED card surface, so it returns the
+    # name-stripped, public-safe card: the recipient's name never rides on the share link
+    # (Docs/FeatureDecisions.md 2026-06-13). The stored content had the name baked in.
+    assert content.child_first_name == "this child"
+    assert "Ade" not in content.model_dump_json()
     # The rpc was called with the token as p_token (the function's only arg).
     rpc_call = next(c for c in fake.calls if "rpc" in c)
     assert rpc_call["rpc"] == "get_card_by_token"
@@ -326,6 +350,23 @@ def test_read_card_by_token_returns_none_for_an_expired_or_invalid_token(monkeyp
     monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
 
     assert cards_service.read_card_by_token("expired-or-unknown") is None
+
+
+def test_read_card_by_token_strips_the_recipient_name_for_the_public_card(monkeypatch):
+    # The token read is the ONLY unauthenticated card surface, so the recipient's name must
+    # not appear in what it returns (Docs/FeatureDecisions.md 2026-06-13: the public card
+    # defaults to no name). The stored content has the name baked in (child_first_name + the
+    # safety note); the read path strips it on the way out without mutating the stored row.
+    assert "Ade" in SAFE_CONTENT.model_dump_json()  # the name IS in the stored content
+    fake = FakeClient(
+        {("rpc", "get_card_by_token"): FakeResponse(SAFE_CONTENT.model_dump(mode="json"))}
+    )
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+
+    content = cards_service.read_card_by_token("live-token")
+    assert content is not None
+    assert content.child_first_name == "this child"
+    assert "Ade" not in content.model_dump_json()
 
 
 # ---------------------------------------------------------------------------
