@@ -260,14 +260,18 @@ def test_list_activities_unknown_chapter_is_404(authed):
 
 
 def _fake_client_for_plan_write():
-    """A FakeClient scripting the child read and the activity_record insert.
+    """A FakeClient scripting the child read, the dedup lookup, and the insert.
 
-    get_child reads child_profile (select) -> the SL-MED Sam row; the activity
-    insert returns the stored row with its id (the write-confirmed representation).
+    get_child reads child_profile (select) -> the SL-MED Sam row; the dedup backstop
+    selects activity_record for the same key and finds NONE (so the insert path runs);
+    the activity insert returns the stored row with its id (the write-confirmed
+    representation).
     """
     return FakeClient(
         {
             ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            # Dedup lookup: no existing same-key row, so prepare_plan INSERTs.
+            ("activity_record", "select"): FakeResponse([]),
             ("activity_record", "insert"): FakeResponse(
                 [{"id": "act-123"}]
             ),
@@ -299,6 +303,8 @@ def test_prepare_plan_ranks_a_promoted_library_strategy_first(monkeypatch):
     fake = FakeClient(
         {
             ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            # Dedup lookup: no existing same-key row, so prepare_plan INSERTs.
+            ("activity_record", "select"): FakeResponse([]),
             ("activity_record", "insert"): FakeResponse([{"id": "act-123"}]),
             # The library scenario read returns the promoted item; the cross-context all-items
             # read returns the same one (it is in this chapter, so it is not a cross-context
@@ -467,6 +473,211 @@ def test_prepare_plan_with_a_not_owned_child_id_yields_no_plan(monkeypatch):
     assert not any(
         c["op"] == "insert" and c["table"] == "activity_record" for c in fake.calls
     )
+
+
+# ---------------------------------------------------------------------------
+# RE-PREPARE DEDUP BACKSTOP (the 2026-06-13 demo bug): same key -> update in place,
+# different key -> a new row, and the dedup is RLS-scoped to the caller.
+# ---------------------------------------------------------------------------
+
+
+def _existing_activity_row(today_flags, *, activity_id="act-existing", user_id="u-1"):
+    """An activity_record row already stored for the caller's same-key activity.
+
+    The dedup lookup selects (id, today_flags); the read-back/update returns the row
+    with its preserved id. user_id is the OWNER (RLS only ever returns the caller's own
+    rows, so a row scripted here belongs to the authenticated caller).
+    """
+    return {
+        "id": activity_id,
+        "user_id": user_id,
+        "child_id": "c-1",
+        "chapter": "travel",
+        "activity_code": "airport-departure-standard",
+        "activity_date": None,
+        "today_flags": list(today_flags),
+        "total": 18,
+        "tier": "Pivot",
+    }
+
+
+def test_prepare_plan_same_key_updates_in_place_no_duplicate(monkeypatch):
+    # Re-preparing the SAME key (same recipient + chapter + activity + day + today flags)
+    # UPDATES the existing activity_record in place: the SAME row id is returned, an UPDATE
+    # is issued (not an INSERT), and the refreshed engine output (scores, total, tier,
+    # strategies) lands on that row. This is the demo dedup backstop: no duplicate row, and
+    # the id is preserved so the activity -> pulse -> LCI chain stays intact.
+    existing = _existing_activity_row(["TG-ILL"])
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            # The dedup lookup finds the caller's existing same-key row...
+            ("activity_record", "select"): FakeResponse([existing]),
+            # ...so prepare_plan UPDATEs it in place and gets the row back (same id).
+            ("activity_record", "update"): FakeResponse(
+                [{"id": "act-existing"}]
+            ),
+            ("strategy_library_item", "select"): FakeResponse([]),
+            ("strategy_library_item", "insert"): FakeResponse([{"id": "ignored"}]),
+        }
+    )
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.strategies.get_anon_client", lambda token=None: fake)
+
+    plan = plans_service.prepare_plan(
+        AUTHED,
+        chapter="travel",
+        activity_code="airport-departure-standard",
+        today_flags=["TG-ILL"],
+        activity_date=None,
+        now=NOW,
+    )
+
+    # The plan is for the SAME row (id preserved), not a new one.
+    assert plan.activity_id == "act-existing"
+
+    # Exactly one UPDATE was issued and NO INSERT (no duplicate row created).
+    updates = [c for c in fake.calls if c["op"] == "update" and c["table"] == "activity_record"]
+    inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "activity_record"]
+    assert len(updates) == 1
+    assert len(inserts) == 0
+
+    # The update is scoped to the row id AND the caller (the RLS first line).
+    assert ("id", "act-existing") in updates[0]["filters"]
+    assert ("user_id", "u-1") in updates[0]["filters"]
+
+    # The refreshed engine output landed on the row (SL-MED airport-standard + SN-NOISE
+    # permanent + TG-ILL today => 5/5/5/5 total 20 Pivot, the same numbers the insert path
+    # would have stored), and the identity key columns are NOT rewritten.
+    payload = updates[0]["payload"]
+    assert payload["total"] == 20
+    assert payload["tier"] == "Pivot"
+    assert payload["temporal"] == 5 and payload["human"] == 5
+    assert payload["today_flags"] == ["TG-ILL"]
+    assert isinstance(payload["strategies"], list)
+    assert "child_id" not in payload and "chapter" not in payload
+    assert "activity_code" not in payload and "user_id" not in payload
+
+    # And the engine output the plan reflects is the refreshed result.
+    assert plan.total == 20
+    assert plan.tier == Tier.PIVOT
+
+
+def test_prepare_plan_different_flag_set_inserts_a_new_row(monkeypatch):
+    # A DIFFERENT key inserts a NEW row. Here the only difference is the today-flag set: an
+    # existing row was prepared with TG-ILL, this prepare uses TG-POORSLEEP, so the flag sets
+    # differ and it is NOT the same key. The dedup lookup returns the non-matching row, the
+    # Python set-equality rejects it, and prepare_plan INSERTs (a new, separate plan).
+    existing = _existing_activity_row(["TG-ILL"])
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("activity_record", "select"): FakeResponse([existing]),
+            ("activity_record", "insert"): FakeResponse([{"id": "act-new"}]),
+            ("strategy_library_item", "select"): FakeResponse([]),
+            ("strategy_library_item", "insert"): FakeResponse([{"id": "ignored"}]),
+        }
+    )
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.strategies.get_anon_client", lambda token=None: fake)
+
+    plan = plans_service.prepare_plan(
+        AUTHED,
+        chapter="travel",
+        activity_code="airport-departure-standard",
+        today_flags=["TG-POORSLEEP"],
+        activity_date=None,
+        now=NOW,
+    )
+
+    # A NEW row was inserted (the flag set differs), and NO update happened.
+    assert plan.activity_id == "act-new"
+    inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "activity_record"]
+    updates = [c for c in fake.calls if c["op"] == "update" and c["table"] == "activity_record"]
+    assert len(inserts) == 1
+    assert len(updates) == 0
+    assert inserts[0]["payload"]["today_flags"] == ["TG-POORSLEEP"]
+
+
+def test_prepare_plan_same_key_reordered_flags_still_updates_in_place(monkeypatch):
+    # The today-flag match is ORDER-INDEPENDENT (the engine reads the flags as a set): an
+    # existing row stored as [TG-POORSLEEP, TG-ILL] is the SAME key as a re-prepare sending
+    # [TG-ILL, TG-POORSLEEP], so it updates in place (no duplicate from a mere reordering).
+    existing = _existing_activity_row(["TG-POORSLEEP", "TG-ILL"])
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            ("activity_record", "select"): FakeResponse([existing]),
+            ("activity_record", "update"): FakeResponse([{"id": "act-existing"}]),
+            ("strategy_library_item", "select"): FakeResponse([]),
+            ("strategy_library_item", "insert"): FakeResponse([{"id": "ignored"}]),
+        }
+    )
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.strategies.get_anon_client", lambda token=None: fake)
+
+    plan = plans_service.prepare_plan(
+        AUTHED,
+        chapter="travel",
+        activity_code="airport-departure-standard",
+        today_flags=["TG-ILL", "TG-POORSLEEP"],
+        activity_date=None,
+        now=NOW,
+    )
+
+    assert plan.activity_id == "act-existing"
+    updates = [c for c in fake.calls if c["op"] == "update" and c["table"] == "activity_record"]
+    inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "activity_record"]
+    assert len(updates) == 1 and len(inserts) == 0
+
+
+def test_prepare_plan_dedup_lookup_is_rls_scoped_to_the_caller(monkeypatch):
+    # The dedup lookup is scoped to the caller (the RLS first line): it filters by user_id,
+    # child_id, chapter and activity_code, so a SECOND account's identical activity can never
+    # match (it is invisible under the caller's RLS client) and stays a separate row. Here the
+    # caller has no same-key row of their own, so the prepare INSERTs (the other user's row,
+    # never returned by this client, does not dedup against the caller).
+    fake = FakeClient(
+        {
+            ("child_profile", "select"): FakeResponse([CHILD_ROW]),
+            # RLS returns NONE for the caller (the other account's identical row is invisible).
+            ("activity_record", "select"): FakeResponse([]),
+            ("activity_record", "insert"): FakeResponse([{"id": "act-mine"}]),
+            ("strategy_library_item", "select"): FakeResponse([]),
+            ("strategy_library_item", "insert"): FakeResponse([{"id": "ignored"}]),
+        }
+    )
+    monkeypatch.setattr("app.services.profile.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+    monkeypatch.setattr("app.services.strategies.get_anon_client", lambda token=None: fake)
+
+    plan = plans_service.prepare_plan(
+        AUTHED,
+        chapter="travel",
+        activity_code="airport-departure-standard",
+        today_flags=["TG-ILL"],
+        activity_date=None,
+        now=NOW,
+    )
+
+    # A new row for the caller (the other user's identical activity did not dedup it).
+    assert plan.activity_id == "act-mine"
+
+    # The dedup lookup carried the caller-scoping filters: user_id (the RLS first line) AND
+    # the rest of the key (child_id, chapter, activity_code). user_id == the caller, so no
+    # other account's row is ever considered.
+    dedup_selects = [
+        c for c in fake.calls if c["op"] == "select" and c["table"] == "activity_record"
+    ]
+    assert dedup_selects, "expected a dedup lookup select on activity_record"
+    filters = dedup_selects[0]["filters"]
+    assert ("user_id", "u-1") in filters
+    assert ("child_id", "c-1") in filters
+    assert ("chapter", "travel") in filters
+    assert ("activity_code", "airport-departure-standard") in filters
 
 
 # ---------------------------------------------------------------------------

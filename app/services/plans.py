@@ -147,18 +147,46 @@ def prepare_plan(
 
     scheduled_pulse_at = compute_scheduled_pulse_at(activity_date, now=now)
 
-    stored = _store_activity_record(
+    # Dedup BACKSTOP (the 2026-06-13 demo bug): re-preparing the SAME key UPDATES the
+    # existing activity_record in place instead of inserting a duplicate. The key is the
+    # engine's deterministic INPUTS: same recipient + chapter + activity + prepared DAY +
+    # same "today" flags => the same row, its id preserved so the activity -> pulse -> LCI
+    # chain stays intact (an UPSERT, never a 409, since the activity_record is that chain's
+    # spine). A different activity / day / flag set is a different key and a new row. The
+    # lookup is RLS-scoped (the caller's rows only), so a second account's identical activity
+    # is always a separate row. See _find_same_key_activity.
+    existing = _find_same_key_activity(
         user,
         child_id=child["id"],
         chapter=chapter,
         activity_code=activity_code,
         activity_date=activity_date,
         today_flags=today_flags,
-        context_note=context_note,
-        scheduled_pulse_at=scheduled_pulse_at,
-        result=result,
-        plan_strategies=plan_strategies,
     )
+    if existing is not None:
+        stored = _update_activity_record(
+            user,
+            activity_id=str(existing["id"]),
+            activity_date=activity_date,
+            today_flags=today_flags,
+            context_note=context_note,
+            scheduled_pulse_at=scheduled_pulse_at,
+            result=result,
+            plan_strategies=plan_strategies,
+        )
+    else:
+        stored = _store_activity_record(
+            user,
+            child_id=child["id"],
+            chapter=chapter,
+            activity_code=activity_code,
+            activity_date=activity_date,
+            today_flags=today_flags,
+            context_note=context_note,
+            scheduled_pulse_at=scheduled_pulse_at,
+            result=result,
+            plan_strategies=plan_strategies,
+        )
 
     # Auto-save (section 4.10): persist each starter strategy as a strategy_library_item for
     # this recipient + scenario, idempotent on a re-plan. Non-interrupting (the plan is already
@@ -478,8 +506,119 @@ def _apply_library(
 
 
 # ---------------------------------------------------------------------------
-# persistence (step 8)
+# persistence (step 8) + the re-prepare dedup backstop
 # ---------------------------------------------------------------------------
+
+
+def _find_same_key_activity(
+    user: AuthedUser,
+    *,
+    child_id: str,
+    chapter: str,
+    activity_code: str,
+    activity_date: Optional[date_type],
+    today_flags: List[str],
+) -> Optional[Dict[str, Any]]:
+    """The caller's existing activity_record for this exact prepare key, or None.
+
+    The dedup key is the engine's deterministic INPUTS (the demo dedup backstop):
+    user_id (RLS-scoped) + child_id + chapter + activity_code + the prepared DAY
+    (activity_date, a date column, so equality is day-granular; both NULL counts as
+    the same day) + the "today" flags as an ORDER-INDEPENDENT SET (the engine reads
+    the flags as a set, so a reordered flag list is the same key). The engine OUTPUTS
+    (scores, total, tier, strategies, scheduled_pulse_at) and the context_note are
+    NOT part of the key: a re-prepare refreshes them on the same row.
+
+    The coarse, indexable columns (user_id, child_id, chapter, activity_code,
+    activity_date) are filtered in the query under RLS; the today_flags SET equality is
+    matched in Python (a text[] column is order-sensitive for any DB operator, and the
+    flag set is small), so the match is exact and order-independent. RLS scopes the read
+    to the caller, so another user's identical activity never matches here.
+    """
+    client = get_anon_client(user.access_token)
+    query = (
+        client.table(ACTIVITY_RECORD_TABLE)
+        .select("id, today_flags")
+        .eq("user_id", user.id)
+        .eq("child_id", child_id)
+        .eq("chapter", chapter)
+        .eq("activity_code", activity_code)
+    )
+    if activity_date is not None:
+        query = query.eq("activity_date", activity_date.isoformat())
+    else:
+        query = query.is_("activity_date", "null")
+
+    target = set(today_flags)
+    for row in _rows(query.execute()):
+        if set(row.get("today_flags") or []) == target:
+            return row
+    return None
+
+
+def _update_activity_record(
+    user: AuthedUser,
+    *,
+    activity_id: str,
+    activity_date: Optional[date_type],
+    today_flags: List[str],
+    context_note: Optional[str],
+    scheduled_pulse_at: datetime,
+    result: EngineResult,
+    plan_strategies: List[PlanStrategy],
+) -> Dict[str, Any]:
+    """Update an existing activity_record in place (the re-prepare path) and return it.
+
+    Preserves the row id (so the activity -> pulse -> LCI chain stays intact) and
+    re-runs the engine OUTPUTS onto it: the base scores (audit), the final scores, the
+    total, the recomputed tier, the today flags, the ranked strategies, the context note,
+    and the freshly computed scheduled_pulse_at. The identity columns (user_id, child_id,
+    chapter, activity_code) are the dedup key and are NOT rewritten. RLS scopes the update
+    to the caller (the update_own policy, migration 0003, additionally requires
+    user_id == auth.uid()), so a forged id for another user matches nothing. If the update
+    returns no representation, the row is read back under RLS so the plan is only ever
+    returned for a confirmed write (the section 4.4 step 8 confirm-the-write rule).
+    """
+    client = get_anon_client(user.access_token)
+    update_row = {
+        "activity_name": result.activity_name,
+        "activity_date": activity_date.isoformat() if activity_date else None,
+        "base_temporal": result.base_scores[Dimension.TEMPORAL],
+        "base_sensory": result.base_scores[Dimension.SENSORY],
+        "base_logistical": result.base_scores[Dimension.LOGISTICAL],
+        "base_human": result.base_scores[Dimension.HUMAN],
+        "temporal": result.scores[Dimension.TEMPORAL],
+        "sensory": result.scores[Dimension.SENSORY],
+        "logistical": result.scores[Dimension.LOGISTICAL],
+        "human": result.scores[Dimension.HUMAN],
+        "total": result.total,
+        "tier": result.tier.value,
+        "today_flags": list(today_flags),
+        "strategies": _strategies_json(plan_strategies),
+        "context_note": context_note,
+        "scheduled_pulse_at": scheduled_pulse_at.isoformat(),
+    }
+    updated = _first(
+        client.table(ACTIVITY_RECORD_TABLE)
+        .update(update_row)
+        .eq("id", activity_id)
+        .eq("user_id", user.id)
+        .execute()
+    )
+    if updated is not None:
+        return updated
+    # No representation returned: read the row back under RLS so the write is confirmed
+    # before the plan is returned (same posture as the insert path).
+    confirmed = _first(
+        client.table(ACTIVITY_RECORD_TABLE)
+        .select("*")
+        .eq("id", activity_id)
+        .eq("user_id", user.id)
+        .execute()
+    )
+    if confirmed is None:
+        raise RuntimeError("activity_record re-prepare update could not be confirmed")
+    return confirmed
 
 
 def _store_activity_record(
