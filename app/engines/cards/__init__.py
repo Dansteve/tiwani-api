@@ -32,6 +32,7 @@ from app.engines.cards.builder import (
     build_card_content,
     build_freshness_note,
     first_name_only,
+    public_safe_content,
 )
 from app.engines.cards.pdf import render_card_pdf
 
@@ -39,6 +40,7 @@ __all__ = [
     "build_card_content",
     "build_freshness_note",
     "first_name_only",
+    "public_safe_content",
     "render_card_pdf",
     "MAX_CARD_STRATEGIES",
 ]

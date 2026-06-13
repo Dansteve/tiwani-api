@@ -311,7 +311,11 @@ def test_read_card_by_token_returns_content_for_a_live_token(monkeypatch):
 
     content = cards_service.read_card_by_token("live-token")
     assert content is not None
-    assert content.child_first_name == "Ade"
+    # The PUBLIC token read is the only UNAUTHENTICATED card surface, so it returns the
+    # name-stripped, public-safe card: the recipient's name never rides on the share link
+    # (Docs/FeatureDecisions.md 2026-06-13). The stored content had the name baked in.
+    assert content.child_first_name == "this child"
+    assert "Ade" not in content.model_dump_json()
     # The rpc was called with the token as p_token (the function's only arg).
     rpc_call = next(c for c in fake.calls if "rpc" in c)
     assert rpc_call["rpc"] == "get_card_by_token"
@@ -326,6 +330,23 @@ def test_read_card_by_token_returns_none_for_an_expired_or_invalid_token(monkeyp
     monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
 
     assert cards_service.read_card_by_token("expired-or-unknown") is None
+
+
+def test_read_card_by_token_strips_the_recipient_name_for_the_public_card(monkeypatch):
+    # The token read is the ONLY unauthenticated card surface, so the recipient's name must
+    # not appear in what it returns (Docs/FeatureDecisions.md 2026-06-13: the public card
+    # defaults to no name). The stored content has the name baked in (child_first_name + the
+    # safety note); the read path strips it on the way out without mutating the stored row.
+    assert "Ade" in SAFE_CONTENT.model_dump_json()  # the name IS in the stored content
+    fake = FakeClient(
+        {("rpc", "get_card_by_token"): FakeResponse(SAFE_CONTENT.model_dump(mode="json"))}
+    )
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+
+    content = cards_service.read_card_by_token("live-token")
+    assert content is not None
+    assert content.child_first_name == "this child"
+    assert "Ade" not in content.model_dump_json()
 
 
 # ---------------------------------------------------------------------------

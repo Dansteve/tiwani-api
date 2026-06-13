@@ -239,3 +239,77 @@ def build_card_content(
         freshness_note=freshness_note,
         generated_at=prepared_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# the PUBLIC (unauthenticated) card: the same content with the recipient's NAME removed
+# ---------------------------------------------------------------------------
+
+# The token-link card (GET /api/v1/cards/{token}) is resolvable with NO account, so it must
+# NOT carry the care recipient's name: a child's name beside their support needs on an
+# unauthenticated bearer link is sensitive data exposed without auth (Docs/FeatureDecisions.md
+# 2026-06-13, the "safe default first" decision; the lawyer/DPO pre-screen). The name is baked
+# into exactly four fields at build time (child_first_name, intro, if_difficult, safety_note);
+# every other field (activity, tier label, strategies, freshness note) carries no name. The
+# name-FREE variants below mirror the name-bearing copy above, with the first name replaced by a
+# neutral pronoun ("they"/"them"/"their") so a helper still reads warm, complete guidance, just
+# never the name; the heading stands in a neutral label. (De-childing these for adult recipients,
+# D8, is the SAME tracked follow-up as the name-bearing copy.) Member-shared + owner card paths do
+# NOT use these (an access-controlled surface keeps the first name); only the public read does.
+
+# The heading label that stands in for the name on the public card ("Supporting: this child").
+_PUBLIC_RECIPIENT_LABEL = "this child"
+
+_PUBLIC_TIER_INTRO: Dict[Tier, str] = {
+    Tier.FULL: (
+        "Thank you for being here. They are usually comfortable with this, so you "
+        "can expect a good day. The notes below help you keep it that way."
+    ),
+    Tier.MODIFIED: (
+        "Thank you for being here. They can join in well with a little support. "
+        "The notes below are what tends to help on the day."
+    ),
+    Tier.PIVOT: (
+        "Thank you for being here. This can be a big ask for them, so the goal is "
+        "a calm, steady time together rather than getting everything done. The notes "
+        "below show what helps most."
+    ),
+}
+
+_PUBLIC_IF_DIFFICULT = (
+    "If things get difficult, that is okay. It is not your fault, and it is not theirs "
+    "either, this is just a hard moment. Slow right down, give them space and time, and "
+    "keep your tone calm. If you are unsure or worried, contact the family, they would "
+    "always rather you reached out."
+)
+
+_PUBLIC_SAFETY_NOTE = (
+    "For anything to do with food, allergies, medicines, or their health, follow the "
+    "family's instructions and ask them first. If you are ever worried about their "
+    "wellbeing, contact the family straight away, and call 999 in an emergency."
+)
+
+
+def public_safe_content(content: CardContent) -> CardContent:
+    """Return the card content with the care recipient's NAME removed, for the PUBLIC card.
+
+    GET /api/v1/cards/{token} is resolvable with no account, so the name must not ride on it
+    (Docs/FeatureDecisions.md 2026-06-13). The name is baked into four fields at build time
+    (child_first_name, intro, if_difficult, safety_note); this swaps those four for the
+    name-free variants (a neutral heading label + the pronoun copy of the SAME tier), leaving
+    every other field untouched (activity, chapter, tier, tier_label, strategies,
+    freshness_note, generated_at, is_stale). Pure: the stored row is never mutated (the read
+    path applies this on the way out, so existing AND new cards are covered). The member-shared
+    and owner card paths do NOT call this, so they keep the first name (an access-controlled
+    surface). The neutral copy is fixed governed copy, screened against the prohibited-words
+    guard by a test (in CI, never at request time).
+    """
+    intro = _PUBLIC_TIER_INTRO[Tier(content.tier)]
+    return content.model_copy(
+        update={
+            "child_first_name": _PUBLIC_RECIPIENT_LABEL,
+            "intro": intro,
+            "if_difficult": _PUBLIC_IF_DIFFICULT,
+            "safety_note": _PUBLIC_SAFETY_NOTE,
+        }
+    )

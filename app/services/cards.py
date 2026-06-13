@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
-from app.engines.cards import build_card_content, build_freshness_note
+from app.engines.cards import build_card_content, build_freshness_note, public_safe_content
 from app.models.card import CardContent, CardCreated, CardStatus, CardSummary
 from app.services.profile import _first, _rows
 from app.services.timestamps import parse_timestamptz
@@ -165,7 +165,12 @@ def read_card_by_token(token: str, *, now: Optional[datetime] = None) -> Optiona
     if not data:
         return None
     content = CardContent.model_validate(data)
-    return _with_freshness(content, now=now)
+    # Strip the recipient's NAME for the PUBLIC card: this token read is the ONLY
+    # unauthenticated card surface, so the name must not ride on the share link
+    # (Docs/FeatureDecisions.md 2026-06-13, the safe-default-first decision). The owner +
+    # member-shared card paths do not pass through here, so they keep the first name. Applied
+    # on the way out; the stored row is never mutated, so existing and new cards are covered.
+    return public_safe_content(_with_freshness(content, now=now))
 
 
 def read_card_content_by_id(

@@ -23,6 +23,7 @@ from app.engines.cards import (
     build_card_content,
     build_freshness_note,
     first_name_only,
+    public_safe_content,
 )
 
 
@@ -212,3 +213,63 @@ def test_build_card_defaults_generated_at_when_not_given():
     content = build_card_content(_activity(), "Ade")
     assert content.generated_at is not None
     assert content.freshness_note
+
+
+# ---------------------------------------------------------------------------
+# public_safe_content: the PUBLIC (unauthenticated) card strips the recipient's NAME
+# ---------------------------------------------------------------------------
+
+
+def test_public_safe_content_removes_the_name_everywhere():
+    # The public token card must carry NO recipient name. Build a card with a real name,
+    # then strip it: the name appears in no field, and the heading is the neutral label.
+    full = build_card_content(_activity(), "Ade Bello")
+    assert "Ade" in full.model_dump_json()  # the name IS there before stripping
+    safe = public_safe_content(full)
+    blob = safe.model_dump_json()
+    assert "Ade" not in blob and "Bello" not in blob
+    assert safe.child_first_name == "this child"
+    # The four name-bearing fields become the neutral, pronoun copy; none names the child.
+    assert "Ade" not in safe.intro
+    assert "Ade" not in safe.if_difficult
+    assert "Ade" not in safe.safety_note
+
+
+def test_public_safe_content_leaves_the_non_name_fields_unchanged():
+    full = build_card_content(_activity(), "Ade Bello")
+    safe = public_safe_content(full)
+    # Everything that never carried the name is preserved exactly.
+    assert safe.activity_name == full.activity_name
+    assert safe.chapter == full.chapter
+    assert safe.tier == full.tier
+    assert safe.tier_label == full.tier_label
+    assert safe.strategies == full.strategies
+    assert safe.freshness_note == full.freshness_note
+    assert safe.generated_at == full.generated_at
+    assert safe.is_stale == full.is_stale
+
+
+@pytest.mark.parametrize(
+    "tier,fragment",
+    [
+        ("Full", "usually comfortable with this"),
+        ("Modified", "join in well with a little support"),
+        ("Pivot", "a big ask for them"),
+    ],
+)
+def test_public_safe_content_intro_matches_the_tier(tier, fragment):
+    # The neutral intro is the de-named version of the SAME tier's intro (meaning preserved).
+    full = build_card_content(_activity(tier=tier), "Ade Bello")
+    safe = public_safe_content(full)
+    assert fragment in safe.intro
+    assert "Ade" not in safe.intro
+
+
+def test_public_safe_content_copy_passes_the_shared_guard():
+    # The neutral public copy is fixed governed copy: it must pass the shared non-clinical
+    # guard (screened here in CI, never at request time), like every other card string. A
+    # banned word would raise ProhibitedWordError; a clean pass returns without raising.
+    from app.engines.alerts.guard import assert_clean
+
+    safe = public_safe_content(build_card_content(_activity(), "Ade"))
+    assert_clean(safe.child_first_name, safe.intro, safe.if_difficult, safe.safety_note)
