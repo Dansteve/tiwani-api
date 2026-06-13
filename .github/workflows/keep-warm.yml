@@ -1,0 +1,39 @@
+name: keep-warm
+
+# Render's free web service spins down after ~15 min idle, and a cold start is ~30-60s
+# (governance/Docs/Deploy.md). That cold start made the first request after idle hang for up
+# to a minute, e.g. opening an invite at /link showed a blank loading state the whole time
+# (Task 11, the §5 dashboard < 2s / prepare < 3s targets also miss on a cold first request).
+#
+# This pings the api's health endpoint ( GET / -> {"status":"healthy"} ) every ~10 minutes so
+# the container never idles out. The api repo is PUBLIC, so scheduled Actions minutes are free.
+# workflow_dispatch lets the owner warm it on demand right before a demo.
+#
+# NOTE: GitHub's scheduled runs are best-effort and can be delayed under load, so this greatly
+# reduces (does not 100% eliminate) cold starts. For a production beta, a paid Render plan (no
+# spin-down) is the robust alternative; this free keep-warm is the no-cost option. Merging this
+# to the default branch (main) is what activates the schedule.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (well under the ~15-min spin-down, with margin)
+  workflow_dispatch: {}        # manual warm (e.g. before a demo)
+
+# Never let two keep-warm runs pile up; a single in-flight ping is enough.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the api health endpoint
+        run: |
+          curl -fsS --max-time 90 --retry 3 --retry-delay 10 --retry-all-errors \
+            https://tiwani-api.onrender.com/ \
+            && echo "api is warm" \
+            || { echo "keep-warm ping failed"; exit 1; }
