@@ -27,13 +27,18 @@ routes map to 503. The shapes and the hardening are real; only the live SDK is d
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.auth import AuthedUser, get_current_user
+from app.engines.subscription import render_billing_error
 from app.models.subscription import MySubscription, PlanList
 from app.services import stripe_stub
 from app.services import subscription as subscription_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -92,9 +97,13 @@ def create_checkout(
     try:
         url = stripe_stub.create_checkout_session(user.id, payload.tier_key, payload.cadence)
     except stripe_stub.StripeNotConfiguredError as exc:
+        # GOVERNED, guarded copy (mirrors the sharing / subscription routes): the raw
+        # StripeNotConfiguredError text names env keys + the stub file path, so it never
+        # reaches the client. The real exception is logged for debugging.
+        logger.exception("Checkout unavailable: Stripe is not configured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=render_billing_error("billing.not_configured"),
         ) from exc
     return CheckoutSession(url=url)
 
@@ -133,10 +142,13 @@ async def stripe_webhook(request: Request) -> WebhookResult:
     try:
         event = stripe_stub.verify_and_parse_event(payload, signature)
     except stripe_stub.StripeNotConfiguredError as exc:
-        # No keys yet: cannot verify, so cannot process. Fail closed with 503.
+        # No keys yet: cannot verify, so cannot process. Fail closed with 503. GOVERNED,
+        # guarded copy (mirrors the checkout path): the raw exception text names env keys
+        # + the stub file path, so it never reaches the caller. The real exception is logged.
+        logger.exception("Webhook unavailable: Stripe is not configured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=render_billing_error("billing.not_configured"),
         ) from exc
     except ValueError as exc:
         # The live verifier raises on a bad/forged signature: reject the request, write nothing.

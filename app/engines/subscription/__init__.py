@@ -24,12 +24,15 @@ package stays copy-only.
 """
 
 from app.engines.subscription.copy import (
+    BILLING_ERROR_COPY,
+    BILLING_ERROR_NOT_CONFIGURED,
     SAFETY_NET_REASSURANCE,
     TIER_DISPLAY_NAMES,
     EntitlementKey,
     PaywallCopy,
     Tier,
     all_emitted_strings,
+    render_billing_error,
     render_paywall,
     tiers_for,
 )
@@ -53,7 +56,10 @@ __all__ = [
     "Tier",
     "TIER_DISPLAY_NAMES",
     "SAFETY_NET_REASSURANCE",
+    "BILLING_ERROR_COPY",
+    "BILLING_ERROR_NOT_CONFIGURED",
     "all_emitted_strings",
+    "render_billing_error",
     "render_paywall",
     "tiers_for",
     # guard

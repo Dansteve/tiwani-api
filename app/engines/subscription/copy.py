@@ -208,6 +208,42 @@ _PAYWALL_COPY: Dict[EntitlementKey, Dict[Tier, PaywallCopy]] = {
 }
 
 
+# --- the billing-surface error strings (the checkout + webhook 503s) ----------------
+# The billing routes (app/routes/billing.py) used to return detail=str(exc), which
+# leaked the StripeNotConfiguredError text (it names the env keys + the stub file path).
+# These governed strings replace it: the same calm, capacity-framed register as the
+# paywall copy, naming a plain capacity ("not available yet") and no internals. The
+# real exception is still LOGGED server-side; only the body is governed. Guarded by
+# assert_clean at render time and covered by the subscription guard test (they are in
+# all_emitted_strings below).
+BILLING_ERROR_NOT_CONFIGURED = (
+    "Paid plans are not available just yet. The full free TIWANI is unaffected, and "
+    "we will let you know the moment plans open."
+)
+
+BILLING_ERROR_COPY: Dict[str, str] = {
+    # Returned on the checkout 503 (no Stripe yet) and the webhook 503 (cannot verify a
+    # webhook without the keys). One calm message for both: paid plans are not live yet.
+    "billing.not_configured": BILLING_ERROR_NOT_CONFIGURED,
+}
+
+
+def render_billing_error(key: str) -> str:
+    """The governed billing-error string for a copy-key, guarded at emit time.
+
+    Looks up the fixed message and runs the subscription guard over it, so a banned
+    phrase can never leave the module. Raises KeyError for an unknown key (a
+    programming error). Used by the billing routes in place of detail=str(exc), so the
+    raw Stripe-stub exception text (which names env keys + a file path) never reaches
+    the client; the route logs the real exception separately.
+    """
+    if key not in BILLING_ERROR_COPY:
+        raise KeyError(f"unknown billing error copy key: {key!r}")
+    text = BILLING_ERROR_COPY[key]
+    assert_clean(text)
+    return text
+
+
 def _coerce_key(key: EntitlementKey | str) -> EntitlementKey:
     """Coerce an entitlement-key code or enum to the EntitlementKey enum."""
     return key if isinstance(key, EntitlementKey) else EntitlementKey(key)
@@ -254,4 +290,5 @@ def all_emitted_strings() -> List[str]:
             strings.extend([copy.heading, copy.body, copy.cta, copy.reassurance])
     strings.extend(TIER_DISPLAY_NAMES.values())
     strings.append(SAFETY_NET_REASSURANCE)
+    strings.extend(BILLING_ERROR_COPY.values())
     return strings

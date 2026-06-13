@@ -436,6 +436,12 @@ def test_post_need_not_owner_is_403(authed, monkeypatch):
     monkeypatch.setattr(village_routes.village_service, "create_need", boom)
     r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": "School run"})
     assert r.status_code == 403
+    # N3 follow-up: the 403 detail is GOVERNED, guarded copy, never the raw service text
+    # and never the internal role label ("owner").
+    detail = r.json()["detail"]
+    assert "not the owner" not in detail
+    assert "owner" not in detail.lower()
+    assert detail == village_routes.render_copy("error.family_only")
 
 
 def test_claim_conflict_is_409(authed, monkeypatch):
@@ -456,6 +462,10 @@ def test_claim_not_member_is_403(authed, monkeypatch):
     monkeypatch.setattr(village_routes.village_service, "claim_need", boom)
     r = authed.post(f"/api/v1/village/needs/{NEED}/claim")
     assert r.status_code == 403
+    # N3 follow-up: GOVERNED, guarded copy for the not-in-village 403, never the raw text.
+    detail = r.json()["detail"]
+    assert "not a member" not in detail
+    assert detail == village_routes.render_copy("error.not_in_village")
 
 
 def test_done_not_claimer_is_403(authed, monkeypatch):
@@ -464,6 +474,10 @@ def test_done_not_claimer_is_403(authed, monkeypatch):
     monkeypatch.setattr(village_routes.village_service, "complete_need", boom)
     r = authed.post(f"/api/v1/village/needs/{NEED}/done")
     assert r.status_code == 403
+    # N3 follow-up: GOVERNED, guarded copy for the helper-only 403, never the raw text.
+    detail = r.json()["detail"]
+    assert "only the claimer" not in detail
+    assert detail == village_routes.render_copy("error.helper_only")
 
 
 def test_get_need_not_found_is_404(authed, monkeypatch):
@@ -472,6 +486,10 @@ def test_get_need_not_found_is_404(authed, monkeypatch):
     monkeypatch.setattr(village_routes.village_service, "get_need_detail", boom)
     r = authed.get(f"/api/v1/village/needs/{NEED}")
     assert r.status_code == 404
+    # N3 follow-up: GOVERNED, guarded copy for the 404, never the raw service text.
+    detail = r.json()["detail"]
+    assert "need not found" not in detail.lower()
+    assert detail == village_routes.render_copy("error.need_not_found")
 
 
 def test_post_need_happy_path_is_201_with_copy_key(authed, monkeypatch):
@@ -513,3 +531,23 @@ def test_post_need_title_is_required_422(authed):
     # An empty title fails pydantic validation (min_length=1) before the service is reached.
     r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": ""})
     assert r.status_code == 422
+
+
+# ===========================================================================
+# N3 follow-up: the 403/404 error copy is GOVERNED + passes the guard
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["error.family_only", "error.helper_only", "error.not_in_village", "error.need_not_found"],
+)
+def test_village_error_copy_keys_render_clean_through_the_guard(key):
+    # The route maps every 403/404 through render_copy(key); render() runs assert_clean
+    # internally, so a prohibited word (clinical / surveillance / a role label) could never
+    # be emitted. A KeyError here would mean the route names a key the copy module lacks.
+    from app.engines.village import find_prohibited_words
+
+    text = village_routes.render_copy(key)
+    assert text  # non-empty governed copy
+    assert find_prohibited_words(text) == []

@@ -106,9 +106,9 @@ def record_village_consent(
     try:
         return village_service.record_consent(user, recipient_id=payload.recipient_id)
     except village_service.NotOwnerError as exc:
-        raise _not_allowed("Only the family owner can record village consent") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NotMemberError as exc:
-        raise _not_allowed("Only the family owner can record village consent") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +150,9 @@ def post_need(
         # Postgres consent-gate RAISE text never reaches the user, only the warm key.
         raise _conflict(render_copy("need.conflict.consent_required")) from exc
     except village_service.NotOwnerError as exc:
-        raise _not_allowed("Only the family owner can post a need") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NotMemberError as exc:
-        raise _not_allowed("Only the family owner can post a need") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NeedConflictError as exc:
         raise _conflict(render_copy("need.conflict.post")) from exc
 
@@ -171,7 +171,7 @@ def list_needs(
     try:
         return village_service.list_needs(user, recipient_id=recipient_id)
     except village_service.NotMemberError as exc:
-        raise _not_allowed("You are not part of this recipient's village") from exc
+        raise _not_allowed(render_copy("error.not_in_village")) from exc
 
 
 @router.get("/village/needs/{need_id}", response_model=NeedDetail)
@@ -188,9 +188,9 @@ def get_need(
     try:
         return village_service.get_need_detail(user, need_id=need_id)
     except village_service.NotMemberError as exc:
-        raise _not_allowed("You are not part of this recipient's village") from exc
+        raise _not_allowed(render_copy("error.not_in_village")) from exc
     except village_service.NeedNotFoundError as exc:
-        raise _not_found("Need not found") from exc
+        raise _not_found(render_copy("error.need_not_found")) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -211,9 +211,9 @@ def claim_need(
     try:
         return village_service.claim_need(user, need_id=need_id)
     except village_service.NotMemberError as exc:
-        raise _not_allowed("You are not part of this recipient's village") from exc
+        raise _not_allowed(render_copy("error.not_in_village")) from exc
     except village_service.NeedNotFoundError as exc:
-        raise _not_found("Need not found") from exc
+        raise _not_found(render_copy("error.need_not_found")) from exc
     except village_service.NeedConflictError as exc:
         raise _conflict(render_copy("need.claim_taken")) from exc
 
@@ -231,11 +231,11 @@ def confirm_need(
     try:
         return village_service.confirm_need(user, need_id=need_id)
     except village_service.NotOwnerError as exc:
-        raise _not_allowed("Only the family owner can confirm a helper") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NotMemberError as exc:
-        raise _not_allowed("Only the family owner can confirm a helper") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NeedNotFoundError as exc:
-        raise _not_found("Need not found") from exc
+        raise _not_found(render_copy("error.need_not_found")) from exc
     except village_service.NeedConflictError as exc:
         raise _conflict(render_copy("need.conflict.confirm")) from exc
 
@@ -253,9 +253,9 @@ def complete_need(
     try:
         return village_service.complete_need(user, need_id=need_id)
     except village_service.NotClaimerError as exc:
-        raise _not_allowed("Only the helper who offered can mark this done") from exc
+        raise _not_allowed(render_copy("error.helper_only")) from exc
     except village_service.NeedNotFoundError as exc:
-        raise _not_found("Need not found") from exc
+        raise _not_found(render_copy("error.need_not_found")) from exc
     except village_service.NeedConflictError as exc:
         raise _conflict(render_copy("need.conflict.done")) from exc
 
@@ -274,9 +274,9 @@ def drop_need(
     try:
         return village_service.drop_need(user, need_id=need_id)
     except village_service.NotClaimerError as exc:
-        raise _not_allowed("Only the helper who offered can step back") from exc
+        raise _not_allowed(render_copy("error.helper_only")) from exc
     except village_service.NeedNotFoundError as exc:
-        raise _not_found("Need not found") from exc
+        raise _not_found(render_copy("error.need_not_found")) from exc
     except village_service.NeedConflictError as exc:
         raise _conflict(render_copy("need.conflict.drop")) from exc
 
@@ -294,11 +294,11 @@ def cancel_need(
     try:
         return village_service.cancel_need(user, need_id=need_id)
     except village_service.NotOwnerError as exc:
-        raise _not_allowed("Only the family owner can cancel a need") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NotMemberError as exc:
-        raise _not_allowed("Only the family owner can cancel a need") from exc
+        raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NeedNotFoundError as exc:
-        raise _not_found("Need not found") from exc
+        raise _not_found(render_copy("error.need_not_found")) from exc
 
 
 # ---------------------------------------------------------------------------

@@ -128,3 +128,43 @@ def test_checkout_is_503_until_stripe_configured(authed):
         "/api/v1/billing/checkout", json={"tier_key": "standard", "cadence": "monthly"}
     )
     assert response.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# N3 follow-up: the 503 body is GOVERNED, never the raw StripeNotConfiguredError text
+# ---------------------------------------------------------------------------
+
+
+def test_checkout_503_returns_governed_copy_not_the_raw_exception(authed):
+    # The route used to return detail=str(exc), which leaked the env-key names and the stub
+    # file path. It now returns the governed billing-error copy; the raw exception is logged.
+    from app.engines.subscription import render_billing_error
+
+    response = authed.post(
+        "/api/v1/billing/checkout", json={"tier_key": "standard", "cadence": "monthly"}
+    )
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == render_billing_error("billing.not_configured")
+    # None of the raw exception internals (env key names / the stub file path) leak.
+    assert "STRIPE_SECRET_KEY" not in detail
+    assert "stripe_stub" not in detail
+    assert "PENDING OWNER STRIPE KEYS" not in detail
+
+
+def test_webhook_503_returns_governed_copy_not_the_raw_exception(client):
+    # The webhook is NOT behind Supabase auth (Stripe is not a logged-in user), so it is
+    # driven off the bare client. With no keys, verify_and_parse_event raises
+    # StripeNotConfiguredError -> 503 with the governed body, never the raw exception text.
+    from app.engines.subscription import render_billing_error
+
+    response = client.post(
+        "/api/v1/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=deadbeef"},
+    )
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == render_billing_error("billing.not_configured")
+    assert "STRIPE_SECRET_KEY" not in detail
+    assert "stripe_stub" not in detail

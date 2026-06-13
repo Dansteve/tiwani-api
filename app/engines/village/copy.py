@@ -133,6 +133,30 @@ COPY: Dict[str, str] = {
     "need.conflict.drop": (
         "There is nothing to step back from here just now."
     ),
+
+    # --- access / not-found (the 403 / 404 paths). Governed so the route's 403/404
+    #     details are warm and capacity-framed, never an internal role label (the guard
+    #     bars "owner" / "viewer"), consistent with the consent-gate path. "the family"
+    #     and "this person's village" stand in for the RBAC roles. ----------------------
+    # 403: a member-only action attempted by someone outside the recipient's village
+    # (list / detail / claim). "Not part of the village" is the warm, non-role framing.
+    "error.not_in_village": (
+        "This is for the people in this person's village. You are not part of it just "
+        "now, so there is nothing to see here."
+    ),
+    # 403: an action only the Coordinator who set the need up can take (post / consent /
+    # confirm / cancel). Framed as "the family arranges this", never a role label.
+    "error.family_only": (
+        "Only the family arranging the help can do this."
+    ),
+    # 403: an action only the helper who offered can take (mark done / step back).
+    "error.helper_only": (
+        "Only the helper who offered for this can do that."
+    ),
+    # 404: the need does not exist or is not visible to the caller. Calm, no detail leaked.
+    "error.need_not_found": (
+        "We could not find this. It may have been completed or taken down."
+    ),
 }
 
 # The copy-keys the api surfaces for each Hub action's result, so the app shows the right
