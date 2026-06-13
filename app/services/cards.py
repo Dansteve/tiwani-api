@@ -97,7 +97,11 @@ class CardNotFoundError(Exception):
 
 
 def create_card(
-    user: AuthedUser, *, activity_id: str, now: Optional[datetime] = None
+    user: AuthedUser,
+    *,
+    activity_id: str,
+    public_name: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> CardCreated:
     """Create a Continuity Card for the caller's activity, return content + token + expiry.
 
@@ -125,7 +129,9 @@ def create_card(
     # base_now is the card's prepared moment: it anchors the freshness note's date and is
     # carried into the stored content as generated_at, so the prepared date the helper
     # reads matches the card_record.created_at the list reports.
-    content = build_card_content(activity, child_name, generated_at=base_now)
+    content = build_card_content(
+        activity, child_name, generated_at=base_now, public_name=public_name
+    )
 
     token = secrets.token_urlsafe(CARD_TOKEN_BYTES)
     expires_at = base_now + timedelta(days=CARD_VALIDITY_DAYS)

@@ -114,7 +114,7 @@ def test_post_cards_returns_the_cardcreated_shape(authed, monkeypatch):
     monkeypatch.setattr(
         cards_routes.cards_service,
         "create_card",
-        lambda user, *, activity_id: created,
+        lambda user, *, activity_id, public_name=None: created,
     )
     response = authed.post("/api/v1/cards", json={"activity_id": "act-1"})
     assert response.status_code == 201
@@ -137,17 +137,37 @@ def test_post_cards_returns_the_cardcreated_shape(authed, monkeypatch):
         "freshness_note",
         "generated_at",
         "is_stale",
+        "public_label",
     }
     assert content["child_first_name"] == "Ade"
 
 
 def test_post_cards_unknown_activity_is_404(authed, monkeypatch):
-    def _raise(user, *, activity_id):
+    def _raise(user, *, activity_id, public_name=None):
         raise cards_service.CardActivityNotFoundError("nope")
 
     monkeypatch.setattr(cards_routes.cards_service, "create_card", _raise)
     response = authed.post("/api/v1/cards", json={"activity_id": "not-mine"})
     assert response.status_code == 404
+
+
+def test_post_cards_passes_the_owner_public_name_to_the_service(authed, monkeypatch):
+    # The opt-in alias chooser: the app sends public_name on create; the route threads it to
+    # the service (which bakes it into public_label for the public card). Default is None.
+    seen = {}
+
+    def _create(user, *, activity_id, public_name=None):
+        seen["public_name"] = public_name
+        return CardCreated(
+            content=SAFE_CONTENT, token="t", expires_at="2026-07-20T12:00:00+00:00"
+        )
+
+    monkeypatch.setattr(cards_routes.cards_service, "create_card", _create)
+    authed.post("/api/v1/cards", json={"activity_id": "act-1", "public_name": "A."})
+    assert seen["public_name"] == "A."
+    # Omitted -> the service receives None (the safe default: no name on the public card).
+    authed.post("/api/v1/cards", json={"activity_id": "act-1"})
+    assert seen["public_name"] is None
 
 
 # ---------------------------------------------------------------------------

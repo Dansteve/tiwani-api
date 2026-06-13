@@ -273,3 +273,49 @@ def test_public_safe_content_copy_passes_the_shared_guard():
 
     safe = public_safe_content(build_card_content(_activity(), "Ade"))
     assert_clean(safe.child_first_name, safe.intro, safe.if_difficult, safe.safety_note)
+
+
+# ---------------------------------------------------------------------------
+# the opt-in public label (the owner's alias chooser): public_name -> public_label
+# ---------------------------------------------------------------------------
+
+
+def test_build_card_bakes_an_owner_public_label_when_given():
+    # The owner opts in to a public label (an initial / nickname / first name): it is stored
+    # as public_label, while child_first_name still holds the real first name for the owner
+    # and member views (those surfaces are not name-stripped).
+    content = build_card_content(_activity(), "Ade Bello", public_name="A.")
+    assert content.public_label == "A."
+    assert content.child_first_name == "Ade"
+
+
+def test_build_card_public_label_is_none_by_default():
+    # No public_name -> no public label -> the public card stays name-free (the safe default).
+    assert build_card_content(_activity(), "Ade Bello").public_label is None
+
+
+def test_build_card_public_label_is_trimmed_and_blank_becomes_none():
+    assert build_card_content(_activity(), "Ade", public_name="  Junior  ").public_label == "Junior"
+    assert build_card_content(_activity(), "Ade", public_name="   ").public_label is None
+
+
+def test_build_card_guards_a_prohibited_word_in_the_public_label():
+    # The owner's public label is user text shown on a public card, so it is guarded like
+    # every other helper-facing string: a clinical word trips the shared guard.
+    with pytest.raises(ProhibitedWordError):
+        build_card_content(_activity(), "Ade", public_name="diagnosis")
+
+
+def test_public_safe_content_uses_the_owner_label_when_set():
+    # When the owner opted in, the PUBLIC card heading shows the label (not "this child"),
+    # the real name is still stripped, and the body copy stays pronoun-based (an initial
+    # reads oddly mid-sentence, so the label is heading-only).
+    safe = public_safe_content(build_card_content(_activity(), "Ade Bello", public_name="A."))
+    assert safe.child_first_name == "A."
+    assert "Ade" not in safe.model_dump_json()
+    assert "A. is usually" not in safe.intro
+
+
+def test_public_safe_content_falls_back_to_neutral_without_a_label():
+    safe = public_safe_content(build_card_content(_activity(), "Ade Bello"))
+    assert safe.child_first_name == "this child"

@@ -176,6 +176,7 @@ def build_card_content(
     child_name: str,
     *,
     generated_at: Optional[datetime] = None,
+    public_name: Optional[str] = None,
 ) -> CardContent:
     """Assemble the SAFE Continuity Card content for an activity (section 4.6).
 
@@ -210,11 +211,15 @@ def build_card_content(
     safety_note = _SAFETY_NOTE.format(name=first_name)
     freshness_note = _FRESHNESS_NOTE.format(date=_format_prepared_date(prepared_at))
     strategies = _card_strategies(activity.get("strategies"))
+    # The owner-chosen PUBLIC-card label (an initial / nickname / first name), or None for no
+    # name; trimmed here, capped at the request layer, guarded below like every other string.
+    public_label = (public_name or "").strip() or None
 
     # The shared non-clinical guard over EVERY helper-facing string: the same guard the
     # Erosion Alert copy uses (one prohibited-words definition, one enforcement). The
     # activity name and the stored strategy text are user/seed data, so they are guarded
-    # too, not just the fixed copy.
+    # too, not just the fixed copy; the owner's public_label is user text on a public card,
+    # so it is guarded too.
     assert_clean(
         activity_name,
         tier_label,
@@ -224,6 +229,7 @@ def build_card_content(
         freshness_note,
         *[s.title for s in strategies],
         *[s.detail for s in strategies],
+        *([public_label] if public_label else []),
     )
 
     return CardContent(
@@ -238,6 +244,7 @@ def build_card_content(
         safety_note=safety_note,
         freshness_note=freshness_note,
         generated_at=prepared_at,
+        public_label=public_label,
     )
 
 
@@ -296,7 +303,8 @@ def public_safe_content(content: CardContent) -> CardContent:
     GET /api/v1/cards/{token} is resolvable with no account, so the name must not ride on it
     (Docs/FeatureDecisions.md 2026-06-13). The name is baked into four fields at build time
     (child_first_name, intro, if_difficult, safety_note); this swaps those four for the
-    name-free variants (a neutral heading label + the pronoun copy of the SAME tier), leaving
+    name-free variants (the owner's chosen public label if any, else a neutral heading, + the
+    pronoun copy of the SAME tier), leaving
     every other field untouched (activity, chapter, tier, tier_label, strategies,
     freshness_note, generated_at, is_stale). Pure: the stored row is never mutated (the read
     path applies this on the way out, so existing AND new cards are covered). The member-shared
@@ -305,9 +313,11 @@ def public_safe_content(content: CardContent) -> CardContent:
     guard by a test (in CI, never at request time).
     """
     intro = _PUBLIC_TIER_INTRO[Tier(content.tier)]
+    # The heading is the owner's chosen public label if they opted in at create
+    # (an initial / nickname / first name), otherwise the neutral "this child" (no name).
     return content.model_copy(
         update={
-            "child_first_name": _PUBLIC_RECIPIENT_LABEL,
+            "child_first_name": content.public_label or _PUBLIC_RECIPIENT_LABEL,
             "intro": intro,
             "if_difficult": _PUBLIC_IF_DIFFICULT,
             "safety_note": _PUBLIC_SAFETY_NOTE,
