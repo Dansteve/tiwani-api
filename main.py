@@ -9,6 +9,9 @@ from app.routes import (
     profile, chapters, plans, pulses, lci, alerts, cards, account,
     strategies, sharing, village, billing,
 )
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from app.rate_limit import limiter, rate_limit_exceeded_handler
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,14 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json"
 )
+
+# Rate limiting (app/rate_limit.py): the global default applies to EVERY route; the strict
+# per-route limits (redeem, the public card read, the mints) stack on top. Wired BEFORE CORS
+# so CORS stays the OUTERMOST middleware and a 429 still carries the CORS headers the browser
+# needs to read it. The 429 uses the governed {"detail": ...} envelope.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Set up CORS middleware to allow the frontend to interact with the API.
 # Origins come from config (CORS_ALLOW_ORIGINS), an explicit allowlist, never "*".

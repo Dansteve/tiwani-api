@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # Postgres database for SQLAlchemy
     DATABASE_URL: str = ""
 
+    # Rate-limit store (app/rate_limit.py). In-process "memory://" is per-instance, correct for the
+    # single warm Render instance; point it at a shared Redis (e.g. redis://...) the moment the api
+    # autoscales past one instance, or the per-IP limit becomes per-instance fiction.
+    RATE_LIMIT_STORAGE_URI: str = "memory://"
+
     # CORS allowed origins as a comma-separated string from the environment.
     # Defaults to the local app and website dev origins. Read the parsed list
     # via the cors_allow_origins property.

@@ -45,7 +45,7 @@ specific paths first regardless, so the token read never shadows them.
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.auth import AuthedUser, get_current_user
 from app.engines.cards import render_card_pdf
@@ -56,6 +56,7 @@ from app.models.card import (
     CardSummary,
     CreateCardRequest,
 )
+from app.rate_limit import CARD_READ_LIMITS, limiter
 from app.services import cards as cards_service
 from app.services.entitlements import EntitlementError, require_entitlement
 
@@ -197,7 +198,8 @@ def read_owned_card_pdf(
 
 
 @router.get("/cards/{token}", response_model=CardContent)
-def read_card(token: str) -> CardContent:
+@limiter.limit(CARD_READ_LIMITS)
+def read_card(request: Request, token: str) -> CardContent:
     """Read a shared Continuity Card by its token (NO auth, section 4.6 / 3.3).
 
     The helper opens the share link; no account is needed. Returns ONLY the safe card
