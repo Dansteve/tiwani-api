@@ -141,8 +141,8 @@ COPY: Dict[str, str] = {
     # 403: a member-only action attempted by someone outside the recipient's village
     # (list / detail / claim). "Not part of the village" is the warm, non-role framing.
     "error.not_in_village": (
-        "This is for the people in this person's village. You are not part of it just "
-        "now, so there is nothing to see here."
+        "This is for the people in this person's village, and you are not part of it "
+        "just now."
     ),
     # 403: an action only the Coordinator who set the need up can take (post / consent /
     # confirm / cancel). Framed as "the family arranges this", never a role label.
