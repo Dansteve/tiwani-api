@@ -30,3 +30,15 @@ def client() -> TestClient:
     """A FastAPI TestClient for the app defined in main.py."""
     with TestClient(main.app) as test_client:
         yield test_client
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_rate_limiting_by_default():
+    """Rate limiting is OFF for the general suite: the existing tests hit the rate-limited
+    routes many times in one fast session and would otherwise trip the new limits (a false
+    failure). The dedicated tests/test_rate_limit.py turns it ON per test to verify it works.
+    """
+    from app.rate_limit import limiter
+
+    limiter.enabled = False
+    yield

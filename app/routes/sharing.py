@@ -51,7 +51,7 @@ specific /recipients/{id}/roster, /members/{...}, /invites/{...}, /card sit unde
 recipient id, so they never collide with /shared-with-me or /redeem.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.auth import AuthedUser, get_current_user
 from app.models.sharing import (
@@ -66,6 +66,7 @@ from app.models.sharing import (
     SharedCard,
     SharedWithMe,
 )
+from app.rate_limit import MINT_LIMIT, REDEEM_LIMITS, REDEEM_TOKEN_LIMIT, limiter, token_key
 from app.services import sharing as sharing_service
 
 router = APIRouter()
@@ -76,7 +77,9 @@ router = APIRouter()
     response_model=InviteCreated,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit(MINT_LIMIT, key_func=token_key)
 def invite_to_recipient(
+    request: Request,
     payload: InviteShareRequest,
     user: AuthedUser = Depends(get_current_user),
 ) -> InviteCreated:
@@ -131,7 +134,10 @@ def record_consent(
 
 
 @router.post("/sharing/redeem", response_model=RedeemResult)
+@limiter.limit(REDEEM_LIMITS)
+@limiter.limit(REDEEM_TOKEN_LIMIT, key_func=token_key)
 def redeem(
+    request: Request,
     payload: RedeemInviteRequest,
     user: AuthedUser = Depends(get_current_user),
 ) -> RedeemResult:
