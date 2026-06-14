@@ -333,8 +333,9 @@ def test_read_card_by_token_returns_content_for_a_live_token(monkeypatch):
     assert content is not None
     # The PUBLIC token read is the only UNAUTHENTICATED card surface, so it returns the
     # name-stripped, public-safe card: the recipient's name never rides on the share link
-    # (Docs/FeatureDecisions.md 2026-06-13). The stored content had the name baked in.
-    assert content.child_first_name == "this child"
+    # (Docs/FeatureDecisions.md 2026-06-13). The neutral heading is recipient-neutral, never
+    # child-specific (Decisions.md D8). The stored content had the name baked in.
+    assert content.child_first_name == "the person they care for"
     assert "Ade" not in content.model_dump_json()
     # The rpc was called with the token as p_token (the function's only arg).
     rpc_call = next(c for c in fake.calls if "rpc" in c)
@@ -365,7 +366,7 @@ def test_read_card_by_token_strips_the_recipient_name_for_the_public_card(monkey
 
     content = cards_service.read_card_by_token("live-token")
     assert content is not None
-    assert content.child_first_name == "this child"
+    assert content.child_first_name == "the person they care for"
     assert "Ade" not in content.model_dump_json()
 
 

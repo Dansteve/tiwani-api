@@ -100,14 +100,16 @@ _SAFETY_NOTE = (
 # advice that no longer fits. This line names the date the plan was prepared and asks a
 # helper to request an up-to-date version if the card is more than a few weeks old. Calm,
 # non-clinical, non-coercive (it defers to the family, it instructs no medical step), and
-# run through the shared guard like every other line. {date} is the prepared date.
+# run through the shared guard like every other line. {date} is the prepared date. The copy
+# is recipient-NEUTRAL ("someone's needs", not "a child's"): TIWANI spans the lifespan, so a
+# card may describe an adult or older person, never only a child (Decisions.md D8).
 #
 # REVIEW-DEFERRED: this exact wording AND the freshness threshold (CARD_FRESHNESS_DAYS in
 # app/services/cards.py, the is_stale window) are the MECHANISM plus reasonable governed
 # copy; the final ratified wording and threshold are deferred to the psychiatrist
 # card-copy sign-off (the board marked them deferred).
 _FRESHNESS_NOTE = (
-    "This plan was prepared on {date}. A child's needs change over time, so if this is "
+    "This plan was prepared on {date}. Someone's needs change over time, so if this is "
     "more than a few weeks old, please ask the family for an up to date version."
 )
 
@@ -128,11 +130,12 @@ def first_name_only(full_name: str) -> str:
     Splits on whitespace and returns the first token, so "Ade Bello" becomes "Ade".
     A card carries the care recipient's FIRST name only (the section 4.6 privacy
     rule); the full name never reaches the helper-facing content. An empty or
-    whitespace-only name falls back to a neutral, non-identifying word so the copy
-    still reads.
+    whitespace-only name falls back to a neutral, recipient-NEUTRAL phrase ("the
+    person you're helping", never "child") so the copy still reads for an adult or
+    older care recipient too (Decisions.md D8: TIWANI spans the lifespan).
     """
     token = (full_name or "").strip().split()
-    return token[0] if token else "your child"
+    return token[0] if token else "the person you're helping"
 
 
 def _card_strategies(stored_strategies: Any) -> List[CardStrategy]:
@@ -260,12 +263,14 @@ def build_card_content(
 # every other field (activity, tier label, strategies, freshness note) carries no name. The
 # name-FREE variants below mirror the name-bearing copy above, with the first name replaced by a
 # neutral pronoun ("they"/"them"/"their") so a helper still reads warm, complete guidance, just
-# never the name; the heading stands in a neutral label. (De-childing these for adult recipients,
-# D8, is the SAME tracked follow-up as the name-bearing copy.) Member-shared + owner card paths do
-# NOT use these (an access-controlled surface keeps the first name); only the public read does.
+# never the name; the heading stands in a recipient-NEUTRAL label ("the person they care for",
+# never "child"), so the public card reads correctly for an adult or older recipient too
+# (Decisions.md D8: TIWANI spans the lifespan). Member-shared + owner card paths do NOT use these
+# (an access-controlled surface keeps the first name); only the public read does.
 
-# The heading label that stands in for the name on the public card ("Supporting: this child").
-_PUBLIC_RECIPIENT_LABEL = "this child"
+# The heading label that stands in for the name on the public card ("Supporting: the person they
+# care for"). Recipient-neutral by design, so it never assumes the recipient is a child (D8).
+_PUBLIC_RECIPIENT_LABEL = "the person they care for"
 
 _PUBLIC_TIER_INTRO: Dict[Tier, str] = {
     Tier.FULL: (
@@ -314,7 +319,8 @@ def public_safe_content(content: CardContent) -> CardContent:
     """
     intro = _PUBLIC_TIER_INTRO[Tier(content.tier)]
     # The heading is the owner's chosen public label if they opted in at create
-    # (an initial / nickname / first name), otherwise the neutral "this child" (no name).
+    # (an initial / nickname / first name), otherwise the recipient-neutral
+    # "the person they care for" (no name, and not child-specific; Decisions.md D8).
     return content.model_copy(
         update={
             "child_first_name": content.public_label or _PUBLIC_RECIPIENT_LABEL,

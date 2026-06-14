@@ -67,9 +67,12 @@ def test_first_name_only_returns_just_the_first_token(full, expected):
 
 
 def test_first_name_only_falls_back_when_empty():
-    # An empty/whitespace name still yields readable, non-identifying copy.
-    assert first_name_only("") == "your child"
-    assert first_name_only("   ") == "your child"
+    # An empty/whitespace name still yields readable, non-identifying copy. The fallback is
+    # recipient-NEUTRAL (it never says "child"), because TIWANI spans the lifespan and a card
+    # may describe an adult or older recipient (Decisions.md D8).
+    assert first_name_only("") == "the person you're helping"
+    assert first_name_only("   ") == "the person you're helping"
+    assert "child" not in first_name_only("").lower()
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +231,8 @@ def test_public_safe_content_removes_the_name_everywhere():
     safe = public_safe_content(full)
     blob = safe.model_dump_json()
     assert "Ade" not in blob and "Bello" not in blob
-    assert safe.child_first_name == "this child"
-    # The four name-bearing fields become the neutral, pronoun copy; none names the child.
+    assert safe.child_first_name == "the person they care for"
+    # The four name-bearing fields become the neutral, pronoun copy; none names the recipient.
     assert "Ade" not in safe.intro
     assert "Ade" not in safe.if_difficult
     assert "Ade" not in safe.safety_note
@@ -307,9 +310,9 @@ def test_build_card_guards_a_prohibited_word_in_the_public_label():
 
 
 def test_public_safe_content_uses_the_owner_label_when_set():
-    # When the owner opted in, the PUBLIC card heading shows the label (not "this child"),
-    # the real name is still stripped, and the body copy stays pronoun-based (an initial
-    # reads oddly mid-sentence, so the label is heading-only).
+    # When the owner opted in, the PUBLIC card heading shows the label (not the neutral
+    # "the person they care for"), the real name is still stripped, and the body copy stays
+    # pronoun-based (an initial reads oddly mid-sentence, so the label is heading-only).
     safe = public_safe_content(build_card_content(_activity(), "Ade Bello", public_name="A."))
     assert safe.child_first_name == "A."
     assert "Ade" not in safe.model_dump_json()
@@ -318,4 +321,49 @@ def test_public_safe_content_uses_the_owner_label_when_set():
 
 def test_public_safe_content_falls_back_to_neutral_without_a_label():
     safe = public_safe_content(build_card_content(_activity(), "Ade Bello"))
-    assert safe.child_first_name == "this child"
+    assert safe.child_first_name == "the person they care for"
+
+
+# ---------------------------------------------------------------------------
+# de-child: the card copy reads for an adult / older recipient, never only a child (D8)
+# ---------------------------------------------------------------------------
+
+
+def test_freshness_note_is_recipient_neutral_no_child():
+    # The freshness line (shown on every card, including the name-stripped PUBLIC card) must not
+    # frame the recipient as a child: TIWANI spans the lifespan, so it says "Someone's needs"
+    # (Decisions.md D8). Pin the neutral phrase and that "child" never appears.
+    note = build_freshness_note(datetime(2026, 6, 5, tzinfo=timezone.utc))
+    assert "Someone's needs change over time" in note
+    assert "child" not in note.lower()
+
+
+@pytest.mark.parametrize(
+    "name,public_name",
+    [
+        ("Margaret Okafor", None),  # an adult/elder recipient, no opt-in label
+        ("", None),  # an empty name (the neutral fallback path)
+        ("Margaret Okafor", "Mum"),  # an opt-in label, still no "child" anywhere
+    ],
+)
+def test_public_card_emits_no_child_framing_for_an_adult(name, public_name):
+    # The whole PUBLIC card (heading + intro + if-difficult + safety + freshness) is what an
+    # unauthenticated helper reads, and it must never call an adult recipient a "child". Build
+    # the card for an adult, strip to the public shape, and assert "child" appears in NO copy
+    # VALUE. (We check the text fields, not the serialized JSON: the field KEY child_first_name
+    # is the cross-repo contract the app reads, not user-facing copy, so it is out of scope.)
+    public = public_safe_content(build_card_content(_activity(), name, public_name=public_name))
+    copy_values = " ".join(
+        [
+            public.child_first_name,
+            public.intro,
+            public.if_difficult,
+            public.safety_note,
+            public.tier_label,
+            public.freshness_note or "",
+        ]
+    ).lower()
+    assert "child" not in copy_values
+    # The heading is either the opt-in label or the recipient-neutral fallback, never "child".
+    expected_heading = public_name or "the person they care for"
+    assert public.child_first_name == expected_heading
