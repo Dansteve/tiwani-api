@@ -32,6 +32,12 @@ What is PROVEN (the five required cases + the ceiling + the adult block):
      card and no roster for this recipient; an unauthenticated caller reads nothing.
   6. TOKEN cannot replay; the share is consent-gated; an ADULT share is BLOCKED without a
      recorded adult consent.
+  7. JOIN CODE (0019) on real SQL: the bound-email caller redeems BY CODE once and the
+     membership row is created (happy path); a WRONG-email caller is rejected by the SQL
+     email-bind with the SAME generic error as an unknown code (no DB-layer oracle); a REPLAY
+     of a spent code fails (single-use, first-wins via the for-update lock + active-only
+     lookup); and the partial unique index uq_recipient_invite_active_join_code behaves (a
+     spent code frees its value; an active duplicate is prevented).
 
 Wiring: requires a real Postgres at RLS_TEST_DATABASE_URL. With it UNSET (a normal dev box,
 the sandbox) the whole module SKIPS, so the no-database suite stays green; a CI job with a
@@ -638,3 +644,211 @@ def test_adult_share_blocked_without_recorded_consent(rls, event_loop):
     # After the adult records their own consent, the share is unblocked and mints.
     invite_id = _run(event_loop, _record_then_share())
     assert invite_id is not None, "an adult share must mint once consent is recorded"
+
+
+# ===========================================================================
+# 7. JOIN CODE (migration 0019): redeem_recipient_invite_by_code, on real SQL.
+#
+# The token redeem above is exercised by case 6; the SHORT typable code is a SEPARATE
+# credential to a child's village (the 2026-06-13 board verdict) and funnels into its OWN
+# redeem RPC. Before 0019 ships, the SQL-level guarantees of that RPC (the email-bind second
+# factor, the single-use lock, the no-oracle uniform error, the partial unique index) must be
+# proven on real Postgres, not asserted by inspection. These four cases do exactly that,
+# minting via the 8-arg code-aware share_recipient_invite (0019) with consent recorded.
+#
+# The 0019 share_recipient_invite, given a non-null p_join_code, INSERTs the invite carrying
+# BOTH the token and the NORMALIZED code (uppercase, no dashes: the canonical stored form the
+# Python normalizer produces). The redeem-by-code RPC looks the code up like-for-like, so the
+# code passed here is already in that canonical form.
+# ===========================================================================
+
+# The redeem-by-code RPC's single, uniform failure error (no oracle): the SAME message and
+# sqlstate on every failure reason (unknown / expired / redeemed / revoked / wrong-email).
+_BY_CODE_GENERIC_MESSAGE = "invite could not be redeemed"
+_BY_CODE_GENERIC_SQLSTATE = "P0001"
+
+
+async def _mint_code_invite(conn, ids, *, email: str, join_code: str) -> str:
+    """Owner mints a CODE-bearing, consent-gated child invite via the 8-arg
+    share_recipient_invite (0019): p_consent_text recorded, p_ttl_hours, p_join_code. Returns
+    the new invite id. A fresh unique token is drawn per call (token is globally unique)."""
+    await _set_caller(conn, ids["owner"])
+    token = "code-tok-" + uuid.uuid4().hex
+    return await conn.fetchval(
+        "select public.share_recipient_invite($1, $2, $3, $4, $5, $6, $7, $8)",
+        ids["recipient"],
+        email,
+        "viewer",
+        token,
+        "child",
+        "I confirm I have the authority to share Ade's support information.",
+        48,
+        join_code,
+    )
+
+
+def test_join_code_happy_path_creates_membership(rls, event_loop):
+    """Case 1: the rightful BOUND-EMAIL caller redeems BY CODE once and a recipient_membership
+    row is created (the happy path against real SQL). Bound to stranger@example.test and
+    redeemed as `stranger`, mirroring the token test's identity pairing."""
+    conn, ids = rls
+    join_code = "HAPPY" + uuid.uuid4().hex[:5].upper()
+
+    async def _check():
+        async with conn.transaction():
+            await _mint_code_invite(conn, ids, email="stranger@example.test", join_code=join_code)
+            # The bound email (stranger) redeems BY CODE.
+            await _set_caller(conn, ids["stranger"])
+            mid = await conn.fetchval(
+                "select public.redeem_recipient_invite_by_code($1)", join_code
+            )
+            # The membership row exists at the invited role (reuse-safe: whether freshly
+            # inserted or an already-active membership reused, the row is present + correct).
+            row = await conn.fetchrow(
+                "select user_id, role, revoked_at from public.recipient_membership "
+                "where id = $1",
+                mid,
+            )
+        return mid, row
+
+    mid, row = _run(event_loop, _check())
+    assert mid is not None, "a bound-email by-code redeem must return a membership id"
+    assert row is not None, "the redeem must create (or reuse) a recipient_membership row"
+    assert str(row["user_id"]) == ids["stranger"], "the membership is for the redeeming caller"
+    assert row["role"] == "viewer", "the membership carries the invited role"
+    assert row["revoked_at"] is None, "the new membership is active"
+
+
+def test_join_code_wrong_email_rejected_same_as_unknown(rls, event_loop):
+    """Case 2: a WRONG-email caller redeeming a valid code is rejected by the SQL email-bind
+    (v_email <> v_inv.email), and gets the EXACT SAME generic error (message + sqlstate) as an
+    UNKNOWN code. This proves the no-oracle property AT THE DB LAYER: the thrown error cannot
+    distinguish 'no such code' from 'code exists, you are not the bound email'."""
+    conn, ids = rls
+    join_code = "WRONG" + uuid.uuid4().hex[:5].upper()
+
+    async def _mint():
+        async with conn.transaction():
+            # Bind to `stranger`; the wrong-email caller below is `owner2`.
+            await _mint_code_invite(conn, ids, email="stranger@example.test", join_code=join_code)
+
+    _run(event_loop, _mint())
+
+    async def _redeem_as(caller, code):
+        async with conn.transaction():
+            await _set_caller(conn, caller)
+            await conn.fetchval("select public.redeem_recipient_invite_by_code($1)", code)
+
+    # Wrong-email caller (owner2) redeeming the VALID code: rejected by the email-bind.
+    with pytest.raises(asyncpg.exceptions.RaiseError) as wrong_email:
+        _run(event_loop, _redeem_as(ids["owner2"], join_code))
+
+    # The SAME caller redeeming a totally UNKNOWN code (well-formed, never minted).
+    with pytest.raises(asyncpg.exceptions.RaiseError) as unknown_code:
+        _run(event_loop, _redeem_as(ids["owner2"], "NEVERMINTED9"))
+
+    # NO ORACLE at the DB layer: identical message AND sqlstate for both failure reasons.
+    assert wrong_email.value.message == _BY_CODE_GENERIC_MESSAGE
+    assert unknown_code.value.message == _BY_CODE_GENERIC_MESSAGE
+    assert wrong_email.value.message == unknown_code.value.message
+    assert wrong_email.value.sqlstate == _BY_CODE_GENERIC_SQLSTATE
+    assert unknown_code.value.sqlstate == _BY_CODE_GENERIC_SQLSTATE
+    assert wrong_email.value.sqlstate == unknown_code.value.sqlstate
+
+    # The rejected wrong-email attempt created NO membership for owner2 (the bind held).
+    async def _no_membership():
+        async with conn.transaction():
+            await _as_service(conn)
+            return await conn.fetch(
+                "select id from public.recipient_membership "
+                "where recipient_id = $1 and user_id = $2 and revoked_at is null",
+                ids["recipient"], ids["owner2"],
+            )
+
+    assert _run(event_loop, _no_membership()) == [], "a wrong-email redeem must not grant access"
+
+
+def test_join_code_replay_fails(rls, event_loop):
+    """Case 3: a REPLAY (second redeem) of the same code FAILS. The first redeem stamps
+    redeemed_at inside the for-update lock; the active-only lookup (redeemed_at is null) then
+    resolves to nothing, so the replay raises the generic failure (single-use / first-wins)."""
+    conn, ids = rls
+    join_code = "REPLY" + uuid.uuid4().hex[:5].upper()
+
+    async def _first_redeem():
+        async with conn.transaction():
+            await _mint_code_invite(conn, ids, email="stranger@example.test", join_code=join_code)
+            await _set_caller(conn, ids["stranger"])
+            return await conn.fetchval(
+                "select public.redeem_recipient_invite_by_code($1)", join_code
+            )
+
+    mid = _run(event_loop, _first_redeem())
+    assert mid is not None, "the first redeem of the code must succeed"
+
+    async def _replay():
+        async with conn.transaction():
+            await _set_caller(conn, ids["stranger"])
+            await conn.fetchval("select public.redeem_recipient_invite_by_code($1)", join_code)
+
+    # The second redeem of the SAME code fails (the active-only lookup no longer finds it).
+    with pytest.raises(asyncpg.exceptions.RaiseError) as replay:
+        _run(event_loop, _replay())
+    # Replay too is the GENERIC error (no oracle distinguishes 'already used' from 'unknown').
+    assert replay.value.message == _BY_CODE_GENERIC_MESSAGE
+    assert replay.value.sqlstate == _BY_CODE_GENERIC_SQLSTATE
+
+
+def test_join_code_partial_unique_index_frees_and_prevents(rls, event_loop):
+    """Case 4: the partial unique index uq_recipient_invite_active_join_code behaves.
+      (a) PREVENTS an active duplicate: minting a SECOND active invite carrying a join_code
+          that is already active raises unique_violation (at most one LIVE invite per code).
+      (b) a SPENT code FREES its value: once the first invite is redeemed (redeemed_at set,
+          so the partial index no longer covers it), a FRESH active invite can carry the SAME
+          normalized code again."""
+    conn, ids = rls
+    join_code = "UNIQ" + uuid.uuid4().hex[:6].upper()
+
+    # (a) PREVENT: two ACTIVE invites with the same code cannot coexist.
+    async def _mint_then_duplicate():
+        async with conn.transaction():
+            await _mint_code_invite(conn, ids, email="stranger@example.test", join_code=join_code)
+            # A second ACTIVE invite with the SAME code: the partial unique index rejects it.
+            await _mint_code_invite(conn, ids, email="another@example.test", join_code=join_code)
+
+    with pytest.raises(asyncpg.exceptions.UniqueViolationError):
+        _run(event_loop, _mint_then_duplicate())
+
+    # (b) FREE: a SPENT code frees its value. (Part (a)'s mints rolled back with its failed
+    # duplicate, so (b) is self-contained: mint ONE active invite with a fresh code, redeem it
+    # to spend it, then prove the same code is reusable by a fresh active invite.)
+    reuse_code = "FREED" + uuid.uuid4().hex[:5].upper()
+
+    async def _redeem_then_reuse():
+        async with conn.transaction():
+            # Mint an active invite carrying the code, bound to stranger.
+            await _mint_code_invite(conn, ids, email="stranger@example.test", join_code=reuse_code)
+            # The bound email (stranger) redeems it, stamping redeemed_at (the code is now spent).
+            await _set_caller(conn, ids["stranger"])
+            await conn.fetchval(
+                "select public.redeem_recipient_invite_by_code($1)", reuse_code
+            )
+            # SPENT, so the partial index frees the code: a fresh active invite may carry it
+            # again (no unique_violation). Mint it and confirm it is the one live invite.
+            new_invite_id = await _mint_code_invite(
+                conn, ids, email="reuse@example.test", join_code=reuse_code
+            )
+            await _as_service(conn)
+            active = await conn.fetch(
+                "select id from public.recipient_invite "
+                "where join_code = $1 and redeemed_at is null and revoked_at is null",
+                reuse_code,
+            )
+        return new_invite_id, active
+
+    new_invite_id, active = _run(event_loop, _redeem_then_reuse())
+    assert new_invite_id is not None, "a spent code must be reusable by a fresh active invite"
+    # Exactly ONE active invite carries the code now (the reused one); the spent one is excluded.
+    assert len(active) == 1, "the partial index must allow exactly one live invite per code"
+    # asyncpg returns uuid objects from both fetchval and fetch; compare as strings.
+    assert str(active[0]["id"]) == str(new_invite_id)

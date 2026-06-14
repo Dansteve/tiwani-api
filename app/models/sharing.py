@@ -104,6 +104,13 @@ class InviteCreated(BaseModel):
 
     invite_id: str
     token: str
+    # The SHORT human-typable code (the 2026-06-13 board verdict), in its display form
+    # XXXXX-XXXXX. A helper can TYPE this instead of pasting the long token; it redeems
+    # the SAME email-bound invite. The DB stores the normalized (no-dash) form; this field
+    # is the formatted, easy-to-read-aloud version the app shows. join_code_copy_key points
+    # at the governed "private code" line.
+    join_code: str
+    join_code_copy_key: str
     role: ShareRole
     expires_at: datetime
     copy_key: str
@@ -138,6 +145,22 @@ class RedeemInviteRequest(BaseModel):
     """
 
     token: str = Field(..., min_length=1)
+
+
+class RedeemByCodeRequest(BaseModel):
+    """POST /api/v1/sharing/redeem-by-code: the invited person TYPES the short join code.
+
+    join_code is the short, human-typable code (the 2026-06-13 board verdict), in any
+    reasonable typed form: case-insensitive, dashes/spaces optional, the Crockford input
+    aliases (I/L -> 1, O -> 0) forgiven. The service normalizes it, resolves the active
+    invite, and funnels into the SAME email-bound, first-wins, single-use redeem CORE as
+    the token path; the caller MUST be signed in as the invite's bound email (the real
+    second factor). Any failure (unknown / expired / used / revoked / wrong-email /
+    malformed) returns ONE generic 400 with an identical body (no oracle). The response is
+    the same RedeemResult the token path returns.
+    """
+
+    join_code: str = Field(..., min_length=1)
 
 
 class RedeemResult(BaseModel):

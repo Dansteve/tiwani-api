@@ -34,6 +34,12 @@ The routes, by trust:
         AUTH. Body {token}. Redeems the email-bound token (atomic, email-bound, first-wins)
         and returns which recipient was linked + the first name + the linked-state copy_key.
         400 if the token is unknown / expired / used / revoked / for a different email.
+    POST   /api/v1/sharing/redeem-by-code
+        AUTH. Body {join_code}. The typable-code analogue of /redeem (the 2026-06-13 board
+        verdict): the helper TYPES the short code instead of pasting the token. Normalizes
+        the code, resolves the active invite, and funnels into the SAME redeem core (still
+        email-bound + first-wins + single-use). ONE generic 400 on ANY failure (no oracle).
+        Rate-limited with the SAME limiters as /redeem (a short code MUST be throttled).
 
   VIEWER side (the person a recipient was shared with):
     GET    /api/v1/sharing/shared-with-me
@@ -59,6 +65,7 @@ from app.models.sharing import (
     InviteCreated,
     InviteShareRequest,
     RecordConsentRequest,
+    RedeemByCodeRequest,
     RedeemInviteRequest,
     RedeemResult,
     RevokeResult,
@@ -154,6 +161,41 @@ def redeem(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This invite link is not valid",
+        ) from exc
+
+
+@router.post("/sharing/redeem-by-code", response_model=RedeemResult)
+@limiter.limit(REDEEM_LIMITS)
+@limiter.limit(REDEEM_TOKEN_LIMIT, key_func=token_key)
+def redeem_by_code(
+    request: Request,
+    payload: RedeemByCodeRequest,
+    user: AuthedUser = Depends(get_current_user),
+) -> RedeemResult:
+    """Redeem an email-bound invite by the short TYPABLE join code (signed-in person).
+
+    The typable-code analogue of /sharing/redeem (the 2026-06-13 board verdict): a helper
+    TYPES the short code instead of pasting the long token. The service normalizes the code
+    (case- and dash-insensitive, the Crockford aliases I/L -> 1, O -> 0 forgiven), resolves
+    the active invite, and funnels into the SAME email-bound, first-wins, single-use redeem
+    CORE the token path uses; the caller MUST be signed in as the invite's bound email (the
+    real second factor on top of single-use + expiry).
+
+    NO-ORACLE: ANY failure (unknown code / expired / already used / revoked / wrong
+    signed-in email / malformed) returns ONE generic 400 with an IDENTICAL body, so an
+    attacker cannot tell "code does not exist" from "code exists but you are not the bound
+    email". RATE-LIMITED with the SAME limiters as the token redeem (5/min;30/hr per-IP +
+    20/min per-token): a short code MUST be throttled, and the email-bind is the wall.
+    """
+    try:
+        return sharing_service.redeem_invite_by_code(user, join_code=payload.join_code)
+    except sharing_service.InviteRedeemError as exc:
+        # The SAME generic 400 + body as every other redeem-by-code failure (no oracle): an
+        # unknown code, an expired/used/revoked one, a wrong-email caller, and a malformed
+        # code are indistinguishable to the caller.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This code is not valid",
         ) from exc
 
 

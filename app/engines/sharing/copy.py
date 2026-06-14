@@ -39,6 +39,7 @@ ROSTER_EMPTY_COPY_KEY = "sharing.roster.empty"
 ROSTER_TITLE_COPY_KEY = "sharing.roster.title"
 REVOKED_COPY_KEY = "sharing.revoked.confirm"
 ADULT_BLOCKED_COPY_KEY = "sharing.adult_blocked"
+JOIN_CODE_COPY_KEY = "sharing.join_code.intro"
 
 # A neutral, non-identifying fallback when a recipient name is missing, so the copy
 # always reads. Mirrors the card builder's first_name_only fallback in spirit (warm,
@@ -101,6 +102,17 @@ _REVOKED_CONFIRM = (
 _ADULT_BLOCKED = (
     "Before you can share {name}'s support card, {name} needs to agree to it themselves. "
     "Ask them to confirm, and you will be able to invite people straight after."
+)
+
+# The line shown to the Coordinator beside a generated short JOIN CODE (the 2026-06-13
+# board verdict). HONEST "private code" framing: never "secure" / "safe" (a short code is
+# not a strong secret on its own; the email-bind is the real wall). Names what the code is
+# (a private code for the invited helper), how it is used (typed in, with the bound email),
+# and that it expires soon. Guarded like every other sharing string.
+_JOIN_CODE_INTRO = (
+    "This is a private code for the person you are inviting. Share it with them directly, "
+    "along with the email address you used. They type the code in to see {name}'s support "
+    "card. It is just for them and it expires soon, so generate a new one whenever you need."
 )
 
 
@@ -177,6 +189,17 @@ def adult_blocked(recipient_name: str) -> str:
     assert_clean(text)
     return text
 
+def join_code_intro(recipient_name: str) -> str:
+    """The governed line shown beside a generated short join code (honest "private code").
+
+    Names what the code is (a private code for the invited helper), how it is used (typed
+    in, with the bound email), and that it expires soon. NEVER claims the code is "secure"
+    or "safe" (the board bar: do not overclaim a short code). Guarded before it is returned.
+    """
+    text = _JOIN_CODE_INTRO.format(name=_first_name(recipient_name))
+    assert_clean(text)
+    return text
+
 
 def all_emitted_strings() -> list[str]:
     """Every governed string this module can emit, for the permanent guard test.
@@ -196,6 +219,7 @@ def all_emitted_strings() -> list[str]:
         out.append(roster_empty(name))
         out.append(revoked_confirm(name))
         out.append(adult_blocked(name))
+        out.append(join_code_intro(name))
     return out
 
 
@@ -211,4 +235,5 @@ COPY_KEYS: Dict[str, str] = {
     ROSTER_EMPTY_COPY_KEY: "Shown when no one else can see the card yet.",
     REVOKED_COPY_KEY: "Confirmation after access is removed.",
     ADULT_BLOCKED_COPY_KEY: "Calm line when an adult recipient has not yet consented.",
+    JOIN_CODE_COPY_KEY: "Line beside a generated short typable join code.",
 }
