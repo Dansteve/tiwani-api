@@ -105,6 +105,8 @@ def test_invite_happy_path_returns_token_and_governed_copy(authed, monkeypatch):
     created = InviteCreated(
         invite_id="inv-1",
         token="tok-share",
+        join_code="KJBJQ-DVF61",
+        join_code_copy_key=sharing_copy.JOIN_CODE_COPY_KEY,
         role=ShareRole.VIEWER,
         expires_at=EXPIRES,
         copy_key=sharing_copy.INVITE_COPY_KEY,
@@ -124,6 +126,9 @@ def test_invite_happy_path_returns_token_and_governed_copy(authed, monkeypatch):
     # The copy_key contract: a governed key, never a role label printed as copy.
     assert body["copy_key"] == sharing_copy.INVITE_COPY_KEY
     assert "consent_text" in body
+    # The short typable join code is returned (display form) with its governed copy key.
+    assert body["join_code"] == "KJBJQ-DVF61"
+    assert body["join_code_copy_key"] == sharing_copy.JOIN_CODE_COPY_KEY
 
 
 def test_invite_unowned_recipient_is_404(authed, monkeypatch):
@@ -296,10 +301,19 @@ def test_service_invite_records_consent_and_mints(monkeypatch):
     assert created.expires_at == EXPIRES
     # The consent text was authored by the api (governed) and names the recipient.
     assert "Ade" in created.consent_text
-    # The RPC was called with the governed consent text (child path passes it).
+    # A short typable join code is returned in display form (XXXXX-XXXXX) with its copy key,
+    # and it normalizes back to a valid 10-char Crockford code.
+    from app.engines.sharing.join_code import normalize_join_code
+    assert "-" in created.join_code
+    assert len(normalize_join_code(created.join_code)) == 10
+    assert created.join_code_copy_key == sharing_copy.JOIN_CODE_COPY_KEY
+    # The RPC was called with the governed consent text (child path passes it), the
+    # normalized join code, and the shortened 48h code TTL.
     rpc_calls = [c for c in fake.calls if c.get("rpc") == "share_recipient_invite"]
     assert rpc_calls and rpc_calls[0]["params"]["p_consent_text"]
     assert rpc_calls[0]["params"]["p_subject_kind"] == "child"
+    assert rpc_calls[0]["params"]["p_join_code"] == normalize_join_code(created.join_code)
+    assert rpc_calls[0]["params"]["p_ttl_hours"] == 48
     # Email is passed through (the RPC lower-cases it server-side).
     assert rpc_calls[0]["params"]["p_email"] == "BEN@example.com"
 
@@ -494,3 +508,188 @@ def test_service_shared_with_me_lists_recipients_first_name_only(monkeypatch):
     assert r.recipient_id == "recip-1"
     assert r.recipient_first_name == "Ade"  # first name only, via the ceiling read
     assert r.copy_key == sharing_copy.LINKED_COPY_KEY
+
+
+# ===========================================================================
+# REDEEM-BY-CODE (the short typable join code, the 2026-06-13 board verdict).
+# Route wiring, the NO-ORACLE generic 400 across every failure reason, the
+# service funnelling into the SAME redeem core, and the rate-limit decoration.
+# ===========================================================================
+
+
+def test_redeem_by_code_happy_path_returns_recipient_and_linked_copy(authed, monkeypatch):
+    result = RedeemResult(
+        recipient_id="recip-1",
+        recipient_first_name="Ade",
+        role=ShareRole.VIEWER,
+        copy_key=sharing_copy.LINKED_COPY_KEY,
+    )
+    captured = {}
+
+    def _fake(user, *, join_code):
+        captured["join_code"] = join_code
+        return result
+
+    monkeypatch.setattr(sharing_service, "redeem_invite_by_code", _fake)
+    # The app sends the code in display form; the service normalizes it.
+    resp = authed.post("/api/v1/sharing/redeem-by-code", json={"join_code": "KJBJQ-DVF61"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["recipient_id"] == "recip-1"
+    assert body["recipient_first_name"] == "Ade"
+    assert body["copy_key"] == sharing_copy.LINKED_COPY_KEY
+    assert captured["join_code"] == "KJBJQ-DVF61"
+
+
+def test_redeem_by_code_requires_auth(client):
+    # No dependency override: the real current-user dep runs and rejects (no token -> 401).
+    resp = client.post("/api/v1/sharing/redeem-by-code", json={"join_code": "KJBJQ-DVF61"})
+    assert resp.status_code == 401
+
+
+def test_redeem_by_code_is_a_generic_400_with_no_oracle(authed, monkeypatch):
+    # THE NO-ORACLE GUARANTEE (the board's load-bearing security property): EVERY failure reason
+    # (unknown code / expired / already redeemed / revoked / wrong signed-in email / malformed)
+    # produces the SAME status AND the SAME body, so an attacker cannot tell "code does not
+    # exist" from "code exists but you are not the bound email". The service raises one error
+    # type (InviteRedeemError) for all of them; here we drive several distinct underlying reasons
+    # and assert the boundary response is byte-for-byte identical.
+    reasons = [
+        "unknown code",
+        "invite expired",
+        "invite already used",
+        "invite revoked",
+        "invite is for a different email",
+        "malformed",
+    ]
+    responses = []
+    for reason in reasons:
+        def _raise(*a, _r=reason, **k):
+            raise sharing_service.InviteRedeemError(_r)
+
+        monkeypatch.setattr(sharing_service, "redeem_invite_by_code", _raise)
+        resp = authed.post("/api/v1/sharing/redeem-by-code", json={"join_code": "ZZZZZ-ZZZZZ"})
+        responses.append((resp.status_code, resp.json()))
+
+    # Identical status AND body across every reason: no oracle leaks which failed.
+    statuses = {r[0] for r in responses}
+    bodies = {tuple(sorted(r[1].items())) for r in responses}
+    assert statuses == {400}, statuses
+    assert len(bodies) == 1, f"the 400 body differs across failure reasons (an oracle!): {bodies}"
+    # And it does not echo the underlying reason.
+    only_body = responses[0][1]
+    for reason in reasons:
+        assert reason not in str(only_body)
+
+
+@pytest.fixture
+def limited_by_code():
+    """Turn the limiter ON for one test with a clean store; restore OFF afterward.
+
+    slowapi stores the per-route Limit config in the decorator closure (not an introspectable
+    attribute), so the ONLY robust way to prove the route carries a limiter is BEHAVIORAL: fire
+    requests and assert the 429. Mirrors the `limited` fixture in tests/test_rate_limit.py.
+    """
+    from app.rate_limit import limiter
+
+    limiter._storage.reset()
+    limiter.enabled = True
+    yield
+    limiter.enabled = False
+    limiter._storage.reset()
+
+
+def test_redeem_by_code_carries_per_ip_limiter(authed, limited_by_code, monkeypatch):
+    # A short code MUST be throttled (the board): the by-code route carries the SAME per-IP
+    # REDEEM_LIMITS (5/min;30/hr) as the token redeem. The 6th attempt from one IP is 429. We
+    # stub the service so the route returns fast and the limiter is what we are exercising.
+    monkeypatch.setattr(
+        sharing_service,
+        "redeem_invite_by_code",
+        lambda *a, **k: (_ for _ in ()).throw(sharing_service.InviteRedeemError("x")),
+    )
+    headers = {"X-Forwarded-For": "77.77.77.77"}
+    body = {"join_code": "ZZZZZ-ZZZZZ"}
+    for i in range(5):  # the REDEEM_LIMITS per-minute budget (per IP)
+        r = authed.post("/api/v1/sharing/redeem-by-code", json=body, headers=headers)
+        assert r.status_code == 400, f"attempt {i} should pass the limiter (got {r.status_code})"
+    blocked = authed.post("/api/v1/sharing/redeem-by-code", json=body, headers=headers)
+    assert blocked.status_code == 429
+    assert blocked.json() == {"detail": "Too many attempts. Please wait a moment and try again."}
+    assert blocked.headers.get("Retry-After") == "60"
+
+
+def test_redeem_by_code_carries_per_token_limiter(authed, limited_by_code, monkeypatch):
+    # The route ALSO carries the per-token REDEEM_TOKEN_LIMIT (20/min). To exercise it
+    # INDEPENDENTLY of the per-IP limit, vary the IP each request (so per-IP never trips) while
+    # the bearer token stays constant (the authed override fixes the user, but the token bucket
+    # keys on the Authorization header, which the TestClient does not send; so we set it). The
+    # 21st request on one token is 429 even though every IP is fresh.
+    monkeypatch.setattr(
+        sharing_service,
+        "redeem_invite_by_code",
+        lambda *a, **k: (_ for _ in ()).throw(sharing_service.InviteRedeemError("x")),
+    )
+    token_headers = {"Authorization": "Bearer one-fixed-token"}
+    body = {"join_code": "ZZZZZ-ZZZZZ"}
+    for i in range(20):  # the REDEEM_TOKEN_LIMIT per-minute budget (per token)
+        h = {**token_headers, "X-Forwarded-For": f"88.88.{i}.{i}"}  # fresh IP each time
+        r = authed.post("/api/v1/sharing/redeem-by-code", json=body, headers=h)
+        assert r.status_code == 400, f"attempt {i} passes the per-IP limit (got {r.status_code})"
+    blocked = authed.post(
+        "/api/v1/sharing/redeem-by-code",
+        json=body,
+        headers={**token_headers, "X-Forwarded-For": "88.88.250.250"},
+    )
+    assert blocked.status_code == 429  # the per-token cap fired though every IP was fresh
+
+
+def test_service_redeem_by_code_funnels_into_the_same_core(monkeypatch):
+    # The by-code service path normalizes the typed code, calls redeem_recipient_invite_by_code,
+    # and funnels into the SAME read-back the token path uses: redeem RPC -> membership id;
+    # membership read-back -> recipient + role; the capped card read -> first name.
+    fake = FakeClient(
+        {
+            ("rpc", "redeem_recipient_invite_by_code"): FakeResponse("m-9"),
+            ("recipient_membership", "select"): FakeResponse(
+                [{"id": "m-9", "recipient_id": "recip-1", "role": "viewer"}]
+            ),
+            ("rpc", "get_recipient_card_for_member"): FakeResponse(SAFE_CARD_JSON),
+        }
+    )
+    _patch_client(monkeypatch, fake)
+    out = sharing_service.redeem_invite_by_code(VIEWER, join_code="kjbjq-dvf61")
+    assert isinstance(out, RedeemResult)
+    assert out.recipient_id == "recip-1"
+    assert out.recipient_first_name == "Ade"
+    assert out.role == ShareRole.VIEWER
+    assert out.copy_key == sharing_copy.LINKED_COPY_KEY
+    # The RPC was called with the NORMALIZED code (uppercase, no dashes), not the typed form.
+    rpc = [c for c in fake.calls if c.get("rpc") == "redeem_recipient_invite_by_code"][0]
+    assert rpc["params"]["p_join_code"] == "KJBJQDVF61"
+
+
+def test_service_redeem_by_code_malformed_raises_without_touching_the_db(monkeypatch):
+    # A malformed code (normalization fails) is the SAME generic failure as an unknown one, and
+    # it never reaches the RPC (the FakeClient would raise if any call were attempted).
+    fake = FakeClient({})  # nothing scripted: any DB/RPC call would AssertionError
+    _patch_client(monkeypatch, fake)
+    with pytest.raises(sharing_service.InviteRedeemError):
+        sharing_service.redeem_invite_by_code(VIEWER, join_code="not-a-valid-code!!")
+    # Proven no RPC was attempted.
+    assert not [c for c in fake.calls if c.get("rpc")]
+
+
+def test_service_redeem_by_code_rpc_failure_raises_redeem_error(monkeypatch):
+    # The by-code RPC raises ONE uniform error for any reason (unknown/expired/used/revoked/
+    # wrong-email); the service wraps it as InviteRedeemError (the route -> generic 400).
+    fake = FakeClient(
+        {
+            ("rpc", "redeem_recipient_invite_by_code"): RuntimeError(
+                "invite could not be redeemed"
+            )
+        }
+    )
+    _patch_client(monkeypatch, fake)
+    with pytest.raises(sharing_service.InviteRedeemError):
+        sharing_service.redeem_invite_by_code(VIEWER, join_code="ZZZZZ-ZZZZZ")
