@@ -24,6 +24,9 @@ just opens GET /api/v1/cards/{token}.
     manage a card (activity, recipient first name, chapter, created/expiry, status,
     and the read-time staleness signal). It is owner-facing (behind auth), still
     first-name-only, and carries no clinical data.
+  - CardPage: the PAGINATED GET /api/v1/cards response: a capped page of CardSummary
+    rows (newest first) plus next_cursor (the keyset cursor for the next, older page,
+    or null at the end), so the list never fetches every card the owner ever made.
   - CardRevoked: the POST /api/v1/cards/{card_id}/revoke response (the updated row).
 
 The card copy is safety-sensitive and is screened by the shared non-clinical guard
@@ -190,6 +193,27 @@ class CardSummary(BaseModel):
     status: CardStatus
     generated_at: datetime
     is_stale: bool
+
+
+class CardPage(BaseModel):
+    """One PAGE of the owner's Card History list (GET /api/v1/cards).
+
+    The list endpoint is paginated so it never reads every card the Coordinator
+    has ever made (the database-load fix): each request returns at most a capped
+    number of rows (CARD_LIST_DEFAULT_LIMIT, the api clamps a larger ?limit), newest
+    first, plus the signal for whether more exist:
+      cards        the page of CardSummary rows, newest first (RLS-scoped to the caller).
+      next_cursor  the keyset cursor to pass back as ?before to fetch the NEXT (older)
+                   page, or null when this is the last page. It is the created_at of the
+                   last row on a FULL page (a page shorter than the limit has no more, so
+                   next_cursor is null). The app sends it straight back as `before`; it is
+                   a timestamp, not PII, and carries no token. A keyset cursor (not an
+                   offset) is used because the list is already ordered by created_at
+                   descending, so it is stable as new cards are added at the top.
+    """
+
+    cards: List[CardSummary]
+    next_cursor: Optional[datetime] = None
 
 
 class CardRevoked(BaseModel):

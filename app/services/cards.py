@@ -10,9 +10,12 @@ section 4.6, HardRules/Api/Modules/Cards.md). Paths with very different trust:
     expires_at = now + 30 days), confirms the write, and returns the content + token +
     expiry to the owner.
 
-  - LIST (auth required): list_cards(user). The Card History screen: the caller's own
-    cards, newest first, each a CardSummary (activity, first name, chapter, created /
-    expiry, status, and the read-time staleness signal). RLS-scoped to the caller.
+  - LIST (auth required): list_cards(user, limit, before). The Card History screen: ONE
+    PAGE of the caller's own cards, newest first, each a CardSummary (activity, first
+    name, chapter, created / expiry, status, and the read-time staleness signal),
+    RLS-scoped to the caller. PAGINATED so the read never pulls every card: `limit` caps
+    the page (default 50, max 100) and `before` is a keyset cursor (created_at) for the
+    next, older page. Returns a CardPage (the rows + next_cursor / null when no more).
 
   - REVOKE (auth required, owner only): revoke_card(user, card_id). A SOFT revoke (the
     board's rule: keep the audit row, never hard-delete): sets revoked_at = now() on the
@@ -48,7 +51,7 @@ from typing import Any, Dict, List, Optional
 from app.auth import AuthedUser
 from app.db import get_anon_client
 from app.engines.cards import build_card_content, build_freshness_note, public_safe_content
-from app.models.card import CardContent, CardCreated, CardStatus, CardSummary
+from app.models.card import CardContent, CardCreated, CardPage, CardStatus, CardSummary
 from app.services.profile import _first, _rows
 from app.services.timestamps import parse_timestamptz
 
@@ -78,6 +81,15 @@ CARD_FRESHNESS_DAYS = 30
 # The number of random bytes behind the share token. token_urlsafe(32) yields a ~43
 # char URL-safe string with 256 bits of entropy: not guessable, the link's one secret.
 CARD_TOKEN_BYTES = 32
+
+# Card History pagination (the database-load fix): the list NEVER reads every card the
+# Coordinator has ever made. Each request returns at most CARD_LIST_DEFAULT_LIMIT rows
+# (newest first); a caller asking for a larger ?limit is clamped to CARD_LIST_MAX_LIMIT,
+# and a non-positive limit falls back to the default. "Load more" pages older cards with
+# a keyset cursor (the created_at of the last row on the previous page), which is stable
+# as new cards are added at the top, unlike an offset.
+CARD_LIST_DEFAULT_LIMIT = 50
+CARD_LIST_MAX_LIMIT = 100
 
 
 class CardActivityNotFoundError(Exception):
@@ -212,19 +224,53 @@ def read_card_content_by_id(
     return _with_freshness(content, now=now)
 
 
-def list_cards(user: AuthedUser, *, now: Optional[datetime] = None) -> List[CardSummary]:
-    """The caller's Continuity Cards, newest first, for the Card History screen.
+def list_cards(
+    user: AuthedUser,
+    *,
+    limit: Optional[int] = None,
+    before: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> CardPage:
+    """One PAGE of the caller's Continuity Cards, newest first (the Card History screen).
 
     Reads the caller's own card_record rows (RLS-scoped: the select filters by user_id
     and runs under the caller's token, so another user's cards are physically
     unreachable), newest first, and maps each to a CardSummary. The status (active /
     expired / revoked) and is_stale are computed at READ time from the row against `now`,
-    so they cannot go stale and the stored row is never mutated. `now` is injectable for
-    tests; defaults to UTC now.
+    so they cannot go stale and the stored row is never mutated.
+
+    PAGINATION (the database-load fix): the read NEVER fetches every card. `limit` is
+    clamped to [1, CARD_LIST_MAX_LIMIT] (defaulting to CARD_LIST_DEFAULT_LIMIT), and the
+    query asks the database for ONE extra row (limit + 1) so we can tell whether more
+    exist without a second count. `before` is the keyset cursor (the created_at of the
+    last row on the previous page): when set, only OLDER rows (created_at < before) are
+    read, so "Load more" walks back through the list. The returned CardPage carries the
+    page plus next_cursor (the last kept row's created_at when a full page came back, else
+    null = no more). `now` and `before` are injectable for tests; `now` defaults to UTC now.
     """
     base_now = now if now is not None else datetime.now(timezone.utc)
-    rows = _owned_card_rows(user)
-    return [_card_summary(row, now=base_now) for row in rows]
+    page_size = _clamp_limit(limit)
+    # Ask for one more than the page so a full+1 result means "there is a next page".
+    rows = _owned_card_rows(user, limit=page_size + 1, before=before)
+    has_more = len(rows) > page_size
+    page_rows = rows[:page_size]
+    summaries = [_card_summary(row, now=base_now) for row in page_rows]
+    # The cursor is the OLDEST row on this page (the list is newest-first), passed back as
+    # `before` to fetch the next page. Only meaningful when more rows remain.
+    next_cursor = summaries[-1].created_at if has_more and summaries else None
+    return CardPage(cards=summaries, next_cursor=next_cursor)
+
+
+def _clamp_limit(limit: Optional[int]) -> int:
+    """The effective page size: the default when unset/non-positive, capped at the max.
+
+    A missing or non-positive limit falls back to CARD_LIST_DEFAULT_LIMIT; a larger value
+    is capped at CARD_LIST_MAX_LIMIT so a client can never ask the database for an
+    unbounded page (the load fix is enforced here, not only at the route).
+    """
+    if limit is None or limit <= 0:
+        return CARD_LIST_DEFAULT_LIMIT
+    return min(limit, CARD_LIST_MAX_LIMIT)
 
 
 def revoke_card(
@@ -338,23 +384,31 @@ def _store_card_record(
     return confirmed
 
 
-def _owned_card_rows(user: AuthedUser) -> List[Dict[str, Any]]:
-    """The caller's card_record rows, newest first (RLS-scoped).
+def _owned_card_rows(
+    user: AuthedUser, *, limit: int, before: Optional[datetime] = None
+) -> List[Dict[str, Any]]:
+    """The caller's card_record rows, newest first, capped at `limit` (RLS-scoped).
 
     Selects only the columns the Card History list needs (no token, since the list is
     for managing not re-sharing): id, activity name comes from the stored content, plus
     the chapter, the timestamps, and revoked_at for the status. The select filters by
     user_id and runs under the caller's token, so RLS makes another user's cards
     unreachable. Ordered by created_at descending so the screen shows newest first.
+
+    Pagination (the database-load fix): `.limit(limit)` bounds the read so it never
+    pulls every row, and when `before` is given a `.lt("created_at", before)` keyset
+    filter restricts the read to rows OLDER than the cursor (the "Load more" page). The
+    caller passes limit = page_size + 1 to detect whether a further page exists.
     """
     client = get_anon_client(user.access_token)
-    return _rows(
+    query = (
         client.table(CARD_RECORD_TABLE)
         .select("id, child_id, activity_id, content, expires_at, created_at, revoked_at")
         .eq("user_id", user.id)
-        .order("created_at", desc=True)
-        .execute()
     )
+    if before is not None:
+        query = query.lt("created_at", before.isoformat())
+    return _rows(query.order("created_at", desc=True).limit(limit).execute())
 
 
 def _set_revoked_at(

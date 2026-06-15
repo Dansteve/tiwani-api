@@ -12,11 +12,13 @@ The routes, by trust:
                                          returns content + share token + expiry. 404 if
                                          the activity is not the caller's. 401 without a
                                          valid bearer token.
-  GET    /api/v1/cards                   AUTH REQUIRED. The caller's Card History: their
-                                         own cards, newest first, each with status
-                                         (active / expired / revoked) and the staleness
-                                         signal. RLS-scoped to the caller. 401 without a
-                                         valid token.
+  GET    /api/v1/cards                   AUTH REQUIRED. The caller's Card History: ONE
+                                         PAGE of their own cards, newest first, each with
+                                         status (active / expired / revoked) and the
+                                         staleness signal, plus a next_cursor for "Load
+                                         more". RLS-scoped to the caller. Paginated (?limit
+                                         capped, ?before keyset cursor) so it never reads
+                                         every card. 401 without a valid token.
   POST   /api/v1/cards/{card_id}/revoke  AUTH REQUIRED, owner only. SOFT-revokes the
                                          caller's card (sets revoked_at; the audit row is
                                          kept). 404 if the card is not the caller's. After
@@ -43,21 +45,23 @@ route are declared before GET /cards/{token}, but FastAPI matches the static and
 specific paths first regardless, so the token read never shadows them.
 """
 
-from typing import List
+from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.auth import AuthedUser, get_current_user
 from app.engines.cards import render_card_pdf
 from app.models.card import (
     CardContent,
     CardCreated,
+    CardPage,
     CardRevoked,
-    CardSummary,
     CreateCardRequest,
 )
 from app.rate_limit import CARD_READ_LIMITS, limiter
 from app.services import cards as cards_service
+from app.services.cards import CARD_LIST_DEFAULT_LIMIT, CARD_LIST_MAX_LIMIT
 from app.services.entitlements import EntitlementError, require_entitlement
 
 router = APIRouter()
@@ -87,16 +91,37 @@ def create_card(
         ) from exc
 
 
-@router.get("/cards", response_model=List[CardSummary])
-def list_cards(user: AuthedUser = Depends(get_current_user)) -> List[CardSummary]:
-    """List the caller's Continuity Cards, newest first (the Card History screen).
+@router.get("/cards", response_model=CardPage)
+def list_cards(
+    user: AuthedUser = Depends(get_current_user),
+    limit: int = Query(
+        default=CARD_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=CARD_LIST_MAX_LIMIT,
+        description="Max cards to return (newest first); capped server-side.",
+    ),
+    before: Optional[datetime] = Query(
+        default=None,
+        description=(
+            "Keyset cursor: return only cards older than this created_at "
+            "(the previous page's next_cursor). Omit for the first page."
+        ),
+    ),
+) -> CardPage:
+    """List ONE PAGE of the caller's Continuity Cards, newest first (the Card History screen).
 
-    Returns the caller's own cards (RLS-scoped), each as a CardSummary with the activity,
-    the care recipient's first name, the chapter, the created/expiry timestamps, the
-    status (active / expired / revoked, computed at read time), and the staleness signal
-    (generated_at + is_stale). 401 without a valid token.
+    Returns a CardPage: the caller's own cards (RLS-scoped), each a CardSummary with the
+    activity, the care recipient's first name, the chapter, the created/expiry timestamps,
+    the status (active / expired / revoked, computed at read time), and the staleness
+    signal (generated_at + is_stale), PLUS next_cursor for "Load more".
+
+    PAGINATED so the read never pulls every card (the database-load fix): `limit` caps the
+    page (default CARD_LIST_DEFAULT_LIMIT, FastAPI enforces 1..CARD_LIST_MAX_LIMIT), and
+    `before` is the keyset cursor (a created_at) for the next, older page. The response's
+    next_cursor is the cursor to send back as `before`, or null when this is the last page.
+    401 without a valid token.
     """
-    return cards_service.list_cards(user)
+    return cards_service.list_cards(user, limit=limit, before=before)
 
 
 @router.post("/cards/{card_id}/revoke", response_model=CardRevoked)
