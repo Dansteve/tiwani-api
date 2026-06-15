@@ -89,6 +89,14 @@ class FakeQuery:
         self._filters.append((column, value))
         return self
 
+    def lt(self, column: str, value: Any) -> "FakeQuery":
+        # PostgREST `.lt(col, value)` (used by the Card History "Load more" keyset cursor,
+        # `created_at < before`). Recorded as a filter like eq; the fake does no actual
+        # filtering, so a test scripts the already-paged rows it expects and can assert the
+        # cursor filter was applied.
+        self._filters.append((column, value))
+        return self
+
     def order(self, *args: Any, **kwargs: Any) -> "FakeQuery":
         return self
 

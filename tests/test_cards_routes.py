@@ -30,6 +30,7 @@ from app.engines.cards import render_card_pdf
 from app.models.card import (
     CardContent,
     CardCreated,
+    CardPage,
     CardStatus,
     CardStrategy,
     CardSummary,
@@ -411,7 +412,7 @@ def test_token_read_marks_a_fresh_card_not_stale(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GET /cards (Card History list): requires auth + the CardSummary shape
+# GET /cards (Card History list): requires auth + the CardPage shape + pagination
 # ---------------------------------------------------------------------------
 
 
@@ -420,24 +421,35 @@ def test_list_cards_requires_authentication(client):
     assert response.status_code == 401
 
 
-def test_list_cards_returns_the_cardsummary_shape(authed, monkeypatch):
-    summary = CardSummary(
-        id="card-1",
+def _summary(card_id="card-1", *, status=CardStatus.ACTIVE):
+    return CardSummary(
+        id=card_id,
         activity_name="School gate drop-off",
         child_first_name="Ade",
         chapter="school",
         created_at=NOW,
         expires_at=NOW + timedelta(days=30),
-        status=CardStatus.ACTIVE,
+        status=status,
         generated_at=NOW,
         is_stale=False,
     )
-    monkeypatch.setattr(cards_routes.cards_service, "list_cards", lambda user: [summary])
+
+
+def test_list_cards_returns_the_cardpage_shape(authed, monkeypatch):
+    page = CardPage(cards=[_summary()], next_cursor=None)
+    monkeypatch.setattr(
+        cards_routes.cards_service,
+        "list_cards",
+        lambda user, *, limit, before: page,
+    )
     response = authed.get("/api/v1/cards")
     assert response.status_code == 200
     body = response.json()
-    assert isinstance(body, list) and len(body) == 1
-    item = body[0]
+    # The response is the paginated envelope: a `cards` page + a `next_cursor` signal.
+    assert set(body.keys()) == {"cards", "next_cursor"}
+    assert body["next_cursor"] is None
+    assert isinstance(body["cards"], list) and len(body["cards"]) == 1
+    item = body["cards"][0]
     assert set(item.keys()) == {
         "id",
         "activity_name",
@@ -452,6 +464,51 @@ def test_list_cards_returns_the_cardsummary_shape(authed, monkeypatch):
     assert item["status"] == "active"
     # The list is for managing, not re-sharing: it never carries the share token.
     assert "token" not in item
+
+
+def test_list_cards_carries_next_cursor_when_more_remain(authed, monkeypatch):
+    # A full page hands back next_cursor (the keyset to fetch the next, older page).
+    page = CardPage(cards=[_summary("a"), _summary("b")], next_cursor=NOW)
+    monkeypatch.setattr(
+        cards_routes.cards_service,
+        "list_cards",
+        lambda user, *, limit, before: page,
+    )
+    body = authed.get("/api/v1/cards").json()
+    assert body["next_cursor"] is not None
+    assert len(body["cards"]) == 2
+
+
+def test_list_cards_passes_limit_and_before_to_the_service(authed, monkeypatch):
+    # The route threads ?limit + ?before into the service (the pagination contract).
+    seen = {}
+
+    def _list(user, *, limit, before):
+        seen["limit"] = limit
+        seen["before"] = before
+        return CardPage(cards=[], next_cursor=None)
+
+    monkeypatch.setattr(cards_routes.cards_service, "list_cards", _list)
+    authed.get("/api/v1/cards?limit=10&before=2026-06-01T00:00:00%2B00:00")
+    assert seen["limit"] == 10
+    assert seen["before"] == datetime(2026, 6, 1, tzinfo=timezone.utc)
+    # Omitted -> the service receives the default limit and no cursor.
+    authed.get("/api/v1/cards")
+    assert seen["limit"] == cards_service.CARD_LIST_DEFAULT_LIMIT
+    assert seen["before"] is None
+
+
+def test_list_cards_rejects_an_over_cap_limit(authed, monkeypatch):
+    # FastAPI enforces the 1..CARD_LIST_MAX_LIMIT bound on ?limit (a 422), so a client can
+    # never ask the database for an unbounded page at the route boundary.
+    monkeypatch.setattr(
+        cards_routes.cards_service,
+        "list_cards",
+        lambda user, *, limit, before: CardPage(cards=[], next_cursor=None),
+    )
+    over = cards_service.CARD_LIST_MAX_LIMIT + 1
+    assert authed.get(f"/api/v1/cards?limit={over}").status_code == 422
+    assert authed.get("/api/v1/cards?limit=0").status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -486,8 +543,8 @@ def test_list_cards_is_user_scoped_and_reports_status_and_staleness(monkeypatch)
     fake = FakeClient({("card_record", "select"): FakeResponse(rows)})
     monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
 
-    summaries = cards_service.list_cards(AUTHED, now=NOW)
-    by_id = {s.id: s for s in summaries}
+    page = cards_service.list_cards(AUTHED, now=NOW)
+    by_id = {s.id: s for s in page.cards}
 
     assert by_id["active-1"].status == CardStatus.ACTIVE
     assert by_id["active-1"].is_stale is False
@@ -502,6 +559,8 @@ def test_list_cards_is_user_scoped_and_reports_status_and_staleness(monkeypatch)
     # activity_name + first name come from the stored safe content.
     assert by_id["active-1"].activity_name == "Active card"
     assert by_id["active-1"].child_first_name == "Ade"
+    # Only 3 rows (< the default page) came back, so there is no further page.
+    assert page.next_cursor is None
 
 
 def test_list_cards_revoked_takes_precedence_over_expired(monkeypatch):
@@ -518,8 +577,83 @@ def test_list_cards_revoked_takes_precedence_over_expired(monkeypatch):
     fake = FakeClient({("card_record", "select"): FakeResponse(rows)})
     monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
 
-    summaries = cards_service.list_cards(AUTHED, now=NOW)
-    assert summaries[0].status == CardStatus.REVOKED
+    page = cards_service.list_cards(AUTHED, now=NOW)
+    assert page.cards[0].status == CardStatus.REVOKED
+
+
+# ---------------------------------------------------------------------------
+# SERVICE: list_cards pagination (the limit + the keyset cursor + the page boundary)
+# ---------------------------------------------------------------------------
+
+
+def _row_at(card_id, *, days_old):
+    """A card_record row created `days_old` days before NOW (the order anchor)."""
+    created = NOW - timedelta(days=days_old)
+    return _card_row(
+        card_id,
+        created_at=created,
+        expires_at=created + timedelta(days=30),
+        activity_name=f"Card {card_id}",
+    )
+
+
+def test_list_cards_caps_the_page_and_reports_a_next_cursor(monkeypatch):
+    # A FULL page (the service asks the DB for limit + 1 rows; the DB returns that many) means
+    # more remain: the extra row is dropped, the page is exactly `limit`, and next_cursor is
+    # the OLDEST kept row's created_at (the keyset to pass back as `before`).
+    rows = [_row_at(f"c{i}", days_old=i) for i in range(3)]  # 3 rows = limit(2) + 1
+    fake = FakeClient({("card_record", "select"): FakeResponse(rows)})
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+
+    page = cards_service.list_cards(AUTHED, limit=2, now=NOW)
+    # Exactly the page size (the +1 probe row is not returned to the caller).
+    assert [c.id for c in page.cards] == ["c0", "c1"]
+    # next_cursor is the last kept row's created_at (c1, 1 day old).
+    assert page.next_cursor == NOW - timedelta(days=1)
+    # The DB was asked for limit + 1 (3), so the caller can detect there is another page.
+    select_call = next(
+        c for c in fake.calls if c["table"] == "card_record" and c["op"] == "select"
+    )
+    assert select_call["table"] == "card_record"
+
+
+def test_list_cards_last_page_has_no_next_cursor(monkeypatch):
+    # Fewer rows than limit + 1 came back, so this is the last page: next_cursor is None.
+    rows = [_row_at("c0", days_old=0), _row_at("c1", days_old=1)]  # 2 rows, limit 5
+    fake = FakeClient({("card_record", "select"): FakeResponse(rows)})
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+
+    page = cards_service.list_cards(AUTHED, limit=5, now=NOW)
+    assert [c.id for c in page.cards] == ["c0", "c1"]
+    assert page.next_cursor is None
+
+
+def test_list_cards_applies_the_before_cursor_for_load_more(monkeypatch):
+    # "Load more" sends the previous page's next_cursor as `before`; the service applies a
+    # `created_at < before` keyset filter so only OLDER cards are read.
+    before = NOW - timedelta(days=1)
+    rows = [_row_at("c2", days_old=2)]
+    fake = FakeClient({("card_record", "select"): FakeResponse(rows)})
+    monkeypatch.setattr("app.services.cards.get_anon_client", lambda token=None: fake)
+
+    page = cards_service.list_cards(AUTHED, limit=5, before=before, now=NOW)
+    assert [c.id for c in page.cards] == ["c2"]
+    select_call = next(
+        c for c in fake.calls if c["table"] == "card_record" and c["op"] == "select"
+    )
+    # The keyset cursor filter was applied (created_at < the cursor ISO), still user-scoped.
+    assert ("created_at", before.isoformat()) in select_call["filters"]
+    assert ("user_id", "u-1") in select_call["filters"]
+
+
+def test_list_cards_clamps_an_over_cap_limit(monkeypatch):
+    # The service caps the page size at CARD_LIST_MAX_LIMIT even if a larger limit slips in
+    # (the route 422s an over-cap ?limit; this is the second line, the load fix enforced
+    # in the service too). A non-positive limit falls back to the default.
+    assert cards_service._clamp_limit(10_000) == cards_service.CARD_LIST_MAX_LIMIT
+    assert cards_service._clamp_limit(0) == cards_service.CARD_LIST_DEFAULT_LIMIT
+    assert cards_service._clamp_limit(None) == cards_service.CARD_LIST_DEFAULT_LIMIT
+    assert cards_service._clamp_limit(7) == 7
 
 
 # ---------------------------------------------------------------------------

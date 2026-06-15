@@ -146,6 +146,33 @@ async def _seed_two_users(conn: "asyncpg.Connection") -> tuple[dict, dict]:
         )
         user["activity_id"] = activity_id
 
+        # card_record (the Card History rows): TWO cards per user, created a day apart, so
+        # the paginated list (newest first + the keyset `before` cursor) has more than one
+        # row to page and the cross-user / cursor isolation is provable.
+        card_ids = []
+        for n in range(2):
+            card_id = str(uuid.uuid4())
+            await conn.execute(
+                """
+                insert into public.card_record (
+                    id, user_id, child_id, activity_id, token, content,
+                    expires_at, created_at
+                ) values (
+                    $1, $2, $3, $4, $5, $6::jsonb,
+                    now() + interval '30 days', now() - ($7 || ' days')::interval
+                )
+                """,
+                card_id,
+                user["id"],
+                child_id,
+                activity_id,
+                f"token-{label}-{n}-{uuid.uuid4().hex}",
+                json.dumps({"activity_name": f"Card {label}{n}", "chapter": _CHAPTER}),
+                str(n),
+            )
+            card_ids.append(card_id)
+        user["card_ids"] = card_ids
+
     return user_a, user_b
 
 
@@ -338,6 +365,72 @@ def test_user_a_cannot_read_user_b_activity_by_id(rls_db, event_loop):
 
 
 # ---------------------------------------------------------------------------
+# card_record: the Card History list (paginated, newest first + the keyset cursor)
+# stays scoped to the caller. The pagination change reads card_record directly with
+# an `order by created_at desc limit N` and an optional `created_at < before` filter,
+# so prove that read can never cross users at the database (RLS, not just the app).
+# ---------------------------------------------------------------------------
+
+def test_user_a_paginated_card_list_sees_only_own_rows(rls_db, event_loop):
+    conn, user_a, user_b = rls_db
+
+    async def _check():
+        async with conn.transaction():
+            await _set_caller(conn, user_a["id"])
+            # The exact shape the paginated list_cards issues: own rows, newest first,
+            # capped. RLS must restrict it to A's cards even with the bound.
+            rows = await conn.fetch(
+                "select id, user_id from public.card_record "
+                "order by created_at desc limit 50"
+            )
+        return rows
+
+    rows = _run(event_loop, _check())
+    owner_ids = {str(r["user_id"]) for r in rows}
+    assert owner_ids == {user_a["id"]}, f"cross-user leak on card_record: {owner_ids}"
+    # A's two seeded cards are visible; B's are not.
+    ids = {str(r["id"]) for r in rows}
+    assert ids == set(user_a["card_ids"])
+    assert not ids & set(user_b["card_ids"])
+
+
+def test_user_a_load_more_cursor_never_pages_into_user_b(rls_db, event_loop):
+    """The keyset `before` cursor stays RLS-scoped: A paging older cards never sees B's."""
+    conn, user_a, user_b = rls_db
+
+    async def _check():
+        async with conn.transaction():
+            await _set_caller(conn, user_a["id"])
+            # A "Load more" with a wide-open cursor (now + 1 day): every row older than the
+            # cursor. RLS must still hand back ONLY A's cards, never B's, however far it pages.
+            rows = await conn.fetch(
+                "select user_id from public.card_record "
+                "where created_at < now() + interval '1 day' "
+                "order by created_at desc limit 50"
+            )
+        return rows
+
+    rows = _run(event_loop, _check())
+    owner_ids = {str(r["user_id"]) for r in rows}
+    assert owner_ids == {user_a["id"]}, f"RLS leak paging card_record: {owner_ids}"
+
+
+def test_user_a_cannot_read_user_b_card_by_id(rls_db, event_loop):
+    conn, user_a, user_b = rls_db
+
+    async def _check():
+        async with conn.transaction():
+            await _set_caller(conn, user_a["id"])
+            row = await conn.fetchrow(
+                "select id from public.card_record where id = $1", user_b["card_ids"][0]
+            )
+        return row
+
+    row = _run(event_loop, _check())
+    assert row is None, "RLS leak: A could read B's card_record row by id"
+
+
+# ---------------------------------------------------------------------------
 # user_profile: a user sees only their own profile row.
 # ---------------------------------------------------------------------------
 
@@ -371,9 +464,13 @@ def test_unauthenticated_caller_sees_no_owner_rows(rls_db, event_loop):
             child_rows = await conn.fetch("select id from public.child_profile")
             activity_rows = await conn.fetch("select id from public.activity_record")
             profile_rows = await conn.fetch("select id from public.user_profile")
-        return child_rows, activity_rows, profile_rows
+            card_rows = await conn.fetch("select id from public.card_record")
+        return child_rows, activity_rows, profile_rows, card_rows
 
-    child_rows, activity_rows, profile_rows = _run(event_loop, _check())
+    child_rows, activity_rows, profile_rows, card_rows = _run(event_loop, _check())
     assert child_rows == [], "RLS leak: an unauthenticated caller read child_profile rows"
     assert activity_rows == [], "RLS leak: an unauthenticated caller read activity_record rows"
     assert profile_rows == [], "RLS leak: an unauthenticated caller read user_profile rows"
+    # The card_record SELECT policy is owner-only too: an anon caller reads no card rows
+    # directly (the public card is reached only via the SECURITY DEFINER token function).
+    assert card_rows == [], "RLS leak: an unauthenticated caller read card_record rows"
