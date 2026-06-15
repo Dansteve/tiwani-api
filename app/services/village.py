@@ -42,8 +42,8 @@ from postgrest.exceptions import APIError
 from app.auth import AuthedUser
 from app.db import get_anon_client
 from app.engines.village import consent_text as governed_consent_text
+from app.engines.village import find_prohibited_words, result_copy_key
 from app.engines.village import render as render_copy
-from app.engines.village import result_copy_key
 from app.models.village import (
     ConsentRecorded,
     NeedActionResult,
@@ -129,6 +129,19 @@ class ConsentRequiredError(Exception):
     The Art. 9 gate (refinement 5): the owner must record per-recipient consent before any
     need is posted. The route maps this to 409 with an actionable detail so the app can
     route the Coordinator to the consent step.
+    """
+
+
+class NeedContentRejectedError(ValueError):
+    """The Coordinator's typed need carried wording the Hub will not broadcast (route -> 422).
+
+    The INGRESS guard (the psychiatrist board's input-side requirement, Fix A): a need is
+    shown to a WIDE circle of helpers, so a clinical / health detail typed into one of its
+    free-text fields must not travel in it. create_need runs find_prohibited_words over the
+    free-text fields BEFORE the create RPC and raises this if any prohibited word is found,
+    so nothing is stored. Distinct from ProhibitedCopyError (the emit-time governance fault
+    over our OWN copy, a loud 500): this is a calm, expected USER-input rejection. It carries
+    NO oracle: it never names the matched word and never echoes the typed text.
     """
 
 
@@ -227,8 +240,12 @@ def create_need(
 
     Calls create_village_need (owner gate + consent gate + the 'posted' audit event). On
     success returns a NeedActionResult with status open and the warm 'posted' copy-key.
-    Raises NotOwnerError (403) / ConsentRequiredError (409) per the RPC's gates.
+    Raises NotOwnerError (403) / ConsentRequiredError (409) per the RPC's gates, and
+    NeedContentRejectedError (422) if the typed free text carries a prohibited word (the
+    INGRESS guard, Fix A): the need is broadcast to the whole village, so a clinical / health
+    detail in any free-text field is REJECTED here, before the RPC, so nothing is stored.
     """
+    _reject_if_content_unsafe(title, detail, location_text, area_label, contact_name)
     need_id = _rpc(
         user,
         RPC_CREATE_NEED,
@@ -246,6 +263,25 @@ def create_need(
     )
     name = _recipient_first_name(user, recipient_id)
     return _action_result(str(need_id), NeedStatus.OPEN, "posted", name=name)
+
+
+def _reject_if_content_unsafe(*fields: Optional[str]) -> None:
+    """Raise NeedContentRejectedError if any free-text field carries a prohibited word.
+
+    The INGRESS guard (Fix A): run the Village Hub's low-level word check
+    (find_prohibited_words: the same governed clinical + surveillance + role-label set the
+    emit-time guard owns) over each non-None free-text field a need broadcasts. We use the
+    low-level check, NOT assert_clean: assert_clean raises ProhibitedCopyError, an emit-time
+    governance fault over our OWN copy (a loud 500); user input that fails is instead a calm,
+    expected 422 (NeedContentRejectedError). On the first field that carries any prohibited
+    word we raise immediately, with NO oracle: the error never names the matched word and
+    never echoes the user's text, so a caller cannot probe the word list field by field.
+    """
+    for value in fields:
+        if value is None:
+            continue
+        if find_prohibited_words(value):
+            raise NeedContentRejectedError()
 
 
 def list_needs(

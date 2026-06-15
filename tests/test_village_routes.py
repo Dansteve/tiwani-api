@@ -631,3 +631,120 @@ def test_village_error_copy_keys_render_clean_through_the_guard(key):
     text = village_routes.render_copy(key)
     assert text  # non-empty governed copy
     assert find_prohibited_words(text) == []
+
+
+# ===========================================================================
+# Fix A (psychiatrist-required): the INGRESS guard on a posted need's free text.
+# A need is broadcast to the whole village, so a clinical / health detail typed into ANY
+# free-text field is REJECTED at create (a calm 422), the create RPC is NEVER called (so
+# nothing is stored), and the message never names the word or echoes the typed text.
+# ===========================================================================
+
+
+# A field name -> a need body that carries a clinical word in exactly that field. "therapy"
+# / "diagnosis" / "treatment" / "condition" are governed clinical words (the alert guard's
+# list, imported by the Village guard). The other fields stay clean.
+_DIRTY_FIELD_BODIES = {
+    "title": {"recipient_id": RECIP, "title": "therapy session pickup"},
+    "detail": {"recipient_id": RECIP, "title": "School run",
+               "detail": "after his diagnosis appointment"},
+    "location_text": {"recipient_id": RECIP, "title": "School run",
+                      "location_text": "the treatment room on Vicar Lane"},
+    "contact_name": {"recipient_id": RECIP, "title": "School run",
+                     "contact_name": "Dr Okafor (condition specialist)"},
+}
+
+
+@pytest.mark.parametrize("field", sorted(_DIRTY_FIELD_BODIES))
+def test_post_need_with_clinical_word_in_a_field_is_422_and_stores_nothing(
+    field, authed, monkeypatch
+):
+    # The REAL service runs over a fake client: if a prohibited word slipped past the ingress
+    # guard the create RPC would be called and logged. We assert it was NOT, so nothing was
+    # stored, and that the 422 detail is the GOVERNED copy (never the typed text, never the
+    # matched word: no echo, no oracle).
+    fake = VillageFakeClient(rpc_scripts={"create_village_need": NEED})
+    _patch_client(monkeypatch, fake)
+    body = _DIRTY_FIELD_BODIES[field]
+    r = authed.post("/api/v1/village/needs", json=body)
+    assert r.status_code == 422, field
+    # the create RPC was never reached: nothing was stored.
+    assert fake.rpc_log == [], f"create RPC was called for a rejected {field}"
+    detail = r.json()["detail"]
+    assert detail == village_routes.render_copy("need.content.rejected")
+    # no echo: the typed free-text values are not reflected back to the caller.
+    for value in body.values():
+        if value != RECIP:
+            assert value not in detail
+    # no oracle: the matched clinical word is not named in the response.
+    for word in ("therapy", "diagnosis", "treatment", "condition"):
+        assert word not in detail.lower()
+
+
+def test_post_need_content_rejected_maps_to_422_governed_copy(authed, monkeypatch):
+    # The route maps the typed NeedContentRejectedError to a calm 422 with the governed key,
+    # the same error->status->copy discipline as the 403/404/409 paths.
+    def boom(*a, **k):
+        raise village_service.NeedContentRejectedError()
+    monkeypatch.setattr(village_routes.village_service, "create_need", boom)
+    r = authed.post("/api/v1/village/needs", json={"recipient_id": RECIP, "title": "x"})
+    assert r.status_code == 422
+    assert r.json()["detail"] == village_routes.render_copy("need.content.rejected")
+
+
+def test_create_need_service_raises_content_rejected_without_calling_the_rpc(monkeypatch):
+    # The service-level contract: a clinical word in any free-text field raises
+    # NeedContentRejectedError BEFORE the create RPC, so the RPC is never invoked.
+    fake = VillageFakeClient(rpc_scripts={"create_village_need": NEED})
+    _patch_client(monkeypatch, fake)
+    with pytest.raises(village_service.NeedContentRejectedError):
+        village_service.create_need(
+            AUTHED, recipient_id=RECIP, title="School run",
+            detail="discuss his anxiety disorder", location_text=None, area_label=None,
+            contact_name=None, contact_phone=None, starts_at=None, ends_at=None,
+        )
+    assert fake.rpc_log == []  # the create RPC was never called
+
+
+def test_create_need_rejection_carries_no_oracle(monkeypatch):
+    # No oracle: the raised error names neither the matched word nor the typed text, so a
+    # caller cannot probe the governed word list field by field.
+    fake = VillageFakeClient(rpc_scripts={"create_village_need": NEED})
+    _patch_client(monkeypatch, fake)
+    try:
+        village_service.create_need(
+            AUTHED, recipient_id=RECIP, title="his clinical notes for school",
+            detail=None, location_text=None, area_label=None, contact_name=None,
+            contact_phone=None, starts_at=None, ends_at=None,
+        )
+        raise AssertionError("expected NeedContentRejectedError")
+    except village_service.NeedContentRejectedError as exc:
+        text = str(exc).lower()
+        assert "clinical" not in text  # the matched word is not surfaced
+        assert "notes" not in text  # the typed text is not echoed
+
+
+def test_post_need_clean_content_still_creates_the_need_201(authed, monkeypatch):
+    # The happy path is unchanged: a clean ask passes the ingress guard, the create RPC runs,
+    # and the route returns 201 with the warm 'posted' copy-key. Real service over the fake
+    # client, with a name row so the rendered copy resolves.
+    fake = VillageFakeClient(
+        rpc_scripts={"create_village_need": NEED},
+        name_row={"name": "Sam Taylor"},
+    )
+    _patch_client(monkeypatch, fake)
+    r = authed.post(
+        "/api/v1/village/needs",
+        json={
+            "recipient_id": RECIP, "title": "School run",
+            "detail": "Pick up at 3pm from the front gate",
+            "location_text": "123 School Lane", "area_label": "North Leeds",
+            "contact_name": "Ada", "contact_phone": "07000",
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["status"] == "open"
+    assert body["copy_key"] == "need.posted_confirmation"
+    # the create RPC WAS called (the need was stored): the guard does not block clean text.
+    assert any(fn == "create_village_need" for fn, _ in fake.rpc_log)

@@ -157,6 +157,16 @@ COPY: Dict[str, str] = {
     "error.need_not_found": (
         "We could not find this. It may have been completed or taken down."
     ),
+    # 422: the Coordinator's typed ask carried wording the Hub will not pass on to helpers
+    # (the INGRESS guard, Fix A, the psychiatrist board's input-side requirement). A need is
+    # broadcast to a WIDE circle of helpers, so a child's health or clinical detail must not
+    # travel in it. Calm, non-clinical, capacity-framed: it nudges a practical re-word, frames
+    # the whole village can see it, and NEVER names the word back, NEVER says "clinical" / a
+    # diagnosis, and NEVER echoes what was typed (no oracle).
+    "need.content.rejected": (
+        "Please describe the help you need in everyday words, without health details or "
+        "private notes. Your whole village can see this."
+    ),
 }
 
 # The copy-keys the api surfaces for each Hub action's result, so the app shows the right

@@ -84,6 +84,10 @@ def _conflict(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
+def _unprocessable(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+
+
 # ---------------------------------------------------------------------------
 # consent (the Art. 9 gate)
 # ---------------------------------------------------------------------------
@@ -130,8 +134,10 @@ def post_need(
 
     403 if the caller is not the recipient's owner. 409 (with an actionable detail) if no
     village consent is on record for the recipient (the app routes to the consent step
-    first). On success returns the new need with status open and the warm 'posted'
-    copy-key.
+    first). 422 (with GOVERNED, non-clinical copy) if the typed free text carries a
+    prohibited word: a need is broadcast to the whole village, so a clinical / health detail
+    is rejected at INGRESS and nothing is stored (Fix A). On success returns the new need
+    with status open and the warm 'posted' copy-key.
     """
     try:
         return village_service.create_need(
@@ -146,6 +152,12 @@ def post_need(
             starts_at=_isoformat(payload.starts_at),
             ends_at=_isoformat(payload.ends_at),
         )
+    except village_service.NeedContentRejectedError as exc:
+        # GOVERNED, guarded copy (the INGRESS guard, Fix A): a clinical / health detail typed
+        # into a need is shown to the whole village, so it is rejected with a calm 422 and
+        # nothing is stored. The message never names the matched word and never echoes the
+        # typed text (no oracle); the service already withheld both.
+        raise _unprocessable(render_copy("need.content.rejected")) from exc
     except village_service.ConsentRequiredError as exc:
         # GOVERNED, guarded copy (mirrors the sharing / subscription routes): the raw
         # Postgres consent-gate RAISE text never reaches the user, only the warm key.

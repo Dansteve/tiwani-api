@@ -134,3 +134,13 @@ def test_word_bounded_entries_do_not_false_trigger_inside_longer_words():
 def test_clean_warm_copy_passes_the_guard():
     assert find_prohibited_words("Offer to help, and the family will confirm with you.") == []
     assert_clean("Thank you for offering", "Step back any time")  # must not raise
+
+
+def test_ingress_rejection_copy_key_is_governed_and_clean():
+    # Fix A: the INGRESS guard's user-facing 422 copy is itself governed and must pass the
+    # Hub guard like every other emitted string. render() runs assert_clean internally, so a
+    # prohibited word here would raise; it is also caught by the all-copy sweep above. It is
+    # warm, capacity-framed, and names that the whole village can see the ask.
+    text = render("need.content.rejected")
+    assert find_prohibited_words(text) == []
+    assert "village" in text.lower()
