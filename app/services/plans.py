@@ -44,16 +44,27 @@ from app.models.plan import (
     DimensionScores,
     PlanStrategy,
     PlanSummary,
+    PlanSummaryPage,
     PreparationPlan,
 )
 from app.models.seed import HIGH_DIMENSION_SCORE, Dimension, Tier
 from app.seed import load_seed
 from app.services import strategies as strategy_library
+from app.services.pagination import clamp_limit
 from app.services.profile import _first, _rows, get_child, get_child_by_id
 from app.services.timestamps import parse_timestamptz
 
 ACTIVITY_RECORD_TABLE = "activity_record"
 PULSE_RECORD_TABLE = "pulse_record"
+
+# Plans-list pagination (the every-list-is-capped rule, the /cards precedent): the stored
+# plans accumulate per user over time, so the list NEVER reads every activity_record. Each
+# request returns at most PLAN_LIST_DEFAULT_LIMIT rows (newest first); a larger ?limit is
+# clamped to PLAN_LIST_MAX_LIMIT, and a non-positive limit falls back to the default. "Load
+# more" pages older plans with a keyset cursor (the created_at of the last row on the
+# previous page), stable as new plans are prepared at the top, unlike an offset.
+PLAN_LIST_DEFAULT_LIMIT = 50
+PLAN_LIST_MAX_LIMIT = 100
 
 # Section 4.4 step 9 Pulse-scheduling constants. The Pulse is due the activity date
 # + this many hours; with no date it is due at the default time the next day. These
@@ -230,6 +241,11 @@ def list_chapter_activities(chapter: str) -> List[ActivityOption]:
     user scoping. Returns each scenario's code, name, and base tier in the seed's
     order. An unknown chapter yields an empty list (the route validates the chapter
     code separately).
+
+    BOUNDED (the every-list-is-capped rule): this is FIXED seed reference data (a curated
+    handful of scenarios per chapter, at most ~14), held in memory and identical for every
+    user, so it cannot grow with usage and needs no cursor. There is no database read to
+    bound here; the list is the seed, capped at the source.
     """
     tables = load_seed()
     options = [
@@ -250,9 +266,14 @@ def list_chapter_activities(chapter: str) -> List[ActivityOption]:
 
 
 def list_stored_plans(
-    user: AuthedUser, *, chapter: Optional[str] = None, now: Optional[datetime] = None
-) -> List[PlanSummary]:
-    """The caller's stored plans as lightweight summaries, newest first.
+    user: AuthedUser,
+    *,
+    chapter: Optional[str] = None,
+    limit: Optional[int] = None,
+    before: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> PlanSummaryPage:
+    """One PAGE of the caller's stored plans as lightweight summaries, newest first.
 
     Reads the caller's activity_record rows (RLS-scoped, so only their own), optionally
     filtered to one chapter, ordered by created_at descending (newest first). Each row
@@ -260,10 +281,23 @@ def list_stored_plans(
     engine) plus the pulse status: an activity is pulse_exists once any pulse_record
     exists for it, and pulse_due when its scheduled_pulse_at has passed with no pulse
     yet (the section 4.7 pending definition). The pulsed-activity ids are read once for
-    the whole list. now is injectable for tests (the due comparison); it defaults to
-    UTC now.
+    the whole page.
+
+    PAGINATION (the every-list-is-capped rule, the /cards precedent): the read NEVER
+    fetches every plan (they accumulate per user). `limit` is clamped to [1,
+    PLAN_LIST_MAX_LIMIT] (defaulting to PLAN_LIST_DEFAULT_LIMIT), and the query asks the
+    database for ONE extra row (limit + 1) so we can tell whether more exist without a
+    second count. `before` is the keyset cursor (the created_at of the last row on the
+    previous page): when set, only OLDER rows (created_at < before) are read, so "Load
+    more" walks back through the list; it composes with the optional `chapter` filter. The
+    returned PlanSummaryPage carries the page plus next_cursor (the last kept row's
+    created_at when a full page came back, else null = no more). now/before/limit are
+    injectable for tests; now defaults to UTC now.
     """
     base_now = _utc_now(now)
+    page_size = clamp_limit(
+        limit, default=PLAN_LIST_DEFAULT_LIMIT, maximum=PLAN_LIST_MAX_LIMIT
+    )
     client = get_anon_client(user.access_token)
 
     query = (
@@ -273,7 +307,10 @@ def list_stored_plans(
     )
     if chapter is not None:
         query = query.eq("chapter", chapter)
-    rows = _rows(query.order("created_at", desc=True).execute())
+    if before is not None:
+        query = query.lt("created_at", before.isoformat())
+    # Ask for one more than the page so a full+1 result means "there is a next page".
+    rows = _rows(query.order("created_at", desc=True).limit(page_size + 1).execute())
 
     pulsed_ids = _pulsed_activity_ids(user)
 
@@ -297,9 +334,15 @@ def list_stored_plans(
         )
 
     # PostgREST already ordered newest-first; re-sort defensively (a fake client or a
-    # null created_at must not reorder the list) so the contract holds regardless.
+    # null created_at must not reorder the list) so the contract holds regardless, THEN
+    # apply the page boundary to the sorted list so the +1 probe and the cursor are exact.
     summaries.sort(key=lambda s: s.created_at, reverse=True)
-    return summaries
+    has_more = len(summaries) > page_size
+    page = summaries[:page_size]
+    # The cursor is the OLDEST row on this page (the list is newest-first), passed back as
+    # `before` to fetch the next page. Only meaningful when more rows remain.
+    next_cursor = page[-1].created_at if has_more and page else None
+    return PlanSummaryPage(plans=page, next_cursor=next_cursor)
 
 
 def get_stored_plan(user: AuthedUser, activity_id: str) -> PreparationPlan:

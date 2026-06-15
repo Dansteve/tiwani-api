@@ -17,6 +17,7 @@ import app.services.subscription as sub_service
 from app.auth import get_current_user
 from app.models.subscription import MySubscription, PlanTier
 from app.models.user_profile import SubscriptionTier
+from tests.fakes_supabase import FakeClient, FakeResponse
 
 NOW = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
 
@@ -79,6 +80,27 @@ def test_list_plans_returns_the_price_list(authed, monkeypatch):
     assert by_key["premium"]["price_monthly_pence"] == 2999
     # The Stripe price ids are NOT in the response (a server-side detail).
     assert "stripe_price_id_monthly" not in by_key["standard"]
+
+
+def test_service_list_plans_caps_the_read(monkeypatch):
+    # BOUNDED (the every-list-is-capped rule): there are only a few plan tiers, but the
+    # plan_tier read still carries a safety `.limit(...)` as the runaway-read backstop.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    rows = [
+        {"key": "free", "name": "Free", "price_monthly_pence": 0, "active": True, "sort": 0},
+        {"key": "standard", "name": "Std", "price_monthly_pence": 1999, "active": True, "sort": 1},
+    ]
+    fake = FakeClient({("plan_tier", "select"): FakeResponse(rows)})
+    monkeypatch.setattr("app.services.subscription.get_anon_client", lambda token=None: fake)
+
+    tiers = sub_service.list_plans(_AuthedUser())
+
+    assert [t.key.value for t in tiers] == ["free", "standard"]
+    plan_select = next(
+        c for c in fake.calls if c["table"] == "plan_tier" and c["op"] == "select"
+    )
+    assert plan_select["limit"] == MAX_BOUNDED_ROWS
 
 
 # ---------------------------------------------------------------------------

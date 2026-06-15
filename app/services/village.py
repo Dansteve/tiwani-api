@@ -50,12 +50,32 @@ from app.models.village import (
     NeedDetail,
     NeedStatus,
     NeedSummary,
+    NeedSummaryPage,
     RosterResponse,
     VillageMember,
 )
+from app.services.pagination import MAX_BOUNDED_ROWS, clamp_limit
 
 RECIPIENT_MEMBERSHIP_TABLE = "recipient_membership"
 CHILD_PROFILE_TABLE = "child_profile"
+
+# Needs-list pagination (the every-list-is-capped rule, the /cards precedent): the live
+# board accumulates as a Coordinator posts needs, so the list NEVER returns an unbounded
+# number. Each request returns at most NEED_LIST_DEFAULT_LIMIT needs in the board's
+# soonest-first order; a larger ?limit is clamped to NEED_LIST_MAX_LIMIT, and a non-positive
+# limit falls back to the default. "Load more" pages forward with a keyset cursor (the id of
+# the last need on the previous page), stable in the board's deterministic order.
+#
+# WHY a Python-side page, not an RPC LIMIT: list_village_needs is a SECURITY DEFINER RPC
+# (migration 0017) that already filters the read to the NON-TERMINAL needs (status in
+# open / claimed / confirmed) of ONE recipient, so the database read is bounded by the live
+# working set, not the whole need history. Pushing the limit + cursor into the RPC signature
+# would need a new migration (and the prod apply is owner-gated), so the page boundary is
+# applied here over the RPC's already-bounded rows: the response is capped, and the DB read
+# stays bounded by the RPC's status filter. A follow-up can push the LIMIT into the RPC when
+# a migration ships.
+NEED_LIST_DEFAULT_LIMIT = 50
+NEED_LIST_MAX_LIMIT = 100
 
 # The RPC names (migration 0017).
 RPC_RECORD_CONSENT = "record_village_consent"
@@ -228,16 +248,63 @@ def create_need(
     return _action_result(str(need_id), NeedStatus.OPEN, "posted", name=name)
 
 
-def list_needs(user: AuthedUser, *, recipient_id: str) -> List[NeedSummary]:
-    """The member's broadcast list for a recipient (MINIMUM VISIBILITY, refinement 2 + 3).
+def list_needs(
+    user: AuthedUser,
+    *,
+    recipient_id: str,
+    limit: Optional[int] = None,
+    after: Optional[str] = None,
+) -> NeedSummaryPage:
+    """One PAGE of the member's broadcast list for a recipient (MINIMUM VISIBILITY, ref 2+3).
 
     Calls list_village_needs (member-gated; returns only the safe summary per non-terminal
     need: title, detail, area-level where, the when window, the recipient first name, and
-    the caller's claim flag, NEVER the exact location or contact). Raises NotMemberError
-    (403) if the caller is not in the recipient's village.
+    the caller's claim flag, NEVER the exact location or contact), in the board's
+    soonest-first order. Raises NotMemberError (403) if the caller is not in the recipient's
+    village.
+
+    PAGINATION (the every-list-is-capped rule, the /cards precedent): the response is capped
+    so the board never returns an unbounded number of needs. `limit` is clamped to [1,
+    NEED_LIST_MAX_LIMIT] (defaulting to NEED_LIST_DEFAULT_LIMIT). `after` is the keyset
+    cursor (the id of the last need on the previous page): the rows that fall AFTER it in the
+    board order form the next page, so "Load more" walks forward through the board. The page
+    boundary is applied in Python over the RPC's already-status-bounded rows (see the module
+    note on why not an RPC LIMIT): the returned NeedSummaryPage carries the page plus
+    next_cursor (the last need's id when a full page remains, else null = no more).
     """
+    page_size = clamp_limit(
+        limit, default=NEED_LIST_DEFAULT_LIMIT, maximum=NEED_LIST_MAX_LIMIT
+    )
     rows = _rpc(user, RPC_LIST_NEEDS, {"p_recipient_id": recipient_id}) or []
-    return [_need_summary(row) for row in rows]
+    summaries = [_need_summary(row) for row in rows]
+    # Keyset forward: skip everything up to and including the cursor id, in the board order.
+    # An unknown cursor (a need that was completed / cancelled since the previous page) means
+    # nothing is skipped, so the caller restarts from the top of the now-shorter board rather
+    # than seeing an error: a safe degrade, not a crash.
+    if after is not None:
+        start = _index_after(summaries, after)
+        summaries = summaries[start:]
+    # Ask conceptually for one more than the page: a remaining row beyond the page means
+    # there is a next page.
+    has_more = len(summaries) > page_size
+    page = summaries[:page_size]
+    next_cursor = page[-1].id if has_more and page else None
+    return NeedSummaryPage(needs=page, next_cursor=next_cursor)
+
+
+def _index_after(summaries: List[NeedSummary], cursor_id: str) -> int:
+    """The index of the first need AFTER the cursor id in the board order.
+
+    Walks the soonest-first board to find the cursor need, and returns the index of the row
+    immediately after it (so the next page starts there). When the cursor is not present (the
+    need was claimed-and-completed or cancelled between pages, so it left the live board),
+    returns 0: the caller restarts from the top of the now-shorter board, which is the safe
+    degrade for a keyset cursor whose row has moved on.
+    """
+    for i, summary in enumerate(summaries):
+        if summary.id == cursor_id:
+            return i + 1
+    return 0
 
 
 def get_need_detail(user: AuthedUser, *, need_id: str) -> NeedDetail:
@@ -361,6 +428,11 @@ def get_roster(user: AuthedUser, *, recipient_id: str) -> RosterResponse:
     (the 0015 select policy: any active member may read the roster). Returns each as a
     VillageMember (the raw role is carried but the app shows a warm label, never the role
     word). The recipient is named by first name only.
+
+    BOUNDED (the every-list-is-capped rule): a recipient's village is a handful of people, so
+    the roster needs no cursor; the read still carries a hard MAX_BOUNDED_ROWS `.limit(...)`
+    so a pathological membership count can never make the query unbounded. The cap is well
+    above any real village size, so it never truncates a member.
     """
     client = get_anon_client(user.access_token)
     rows = _rows(
@@ -369,6 +441,7 @@ def get_roster(user: AuthedUser, *, recipient_id: str) -> RosterResponse:
         .eq("recipient_id", recipient_id)
         .is_("revoked_at", "null")
         .order("granted_at", desc=False)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
     members = [

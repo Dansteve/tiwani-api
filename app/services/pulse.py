@@ -28,6 +28,7 @@ from app.models.pulse import PendingPulse, PulseRecord
 from app.services import alerts as alerts_service
 from app.services import lci as lci_service
 from app.services import strategies as strategy_library
+from app.services.pagination import MAX_BOUNDED_ROWS
 from app.services.profile import _first, _rows
 from app.services.timestamps import parse_timestamptz
 
@@ -142,6 +143,11 @@ def list_pending_pulses(user: AuthedUser, *, now: Optional[datetime] = None) -> 
     pulse_record activity ids under RLS, filters in Python, and returns each as a
     PendingPulse, soonest-due first. The app owns the persist-across-opens and
     dismiss-twice behaviour; the api only reports what is still pending.
+
+    BOUNDED (the every-list-is-capped rule): the pending working set is small (an activity
+    leaves the list as soon as it is pulsed), so the list needs no cursor; the activity read
+    still carries a hard MAX_BOUNDED_ROWS `.limit(...)` so a pathological activity count can
+    never make the query unbounded. The cap is well above any real pending count.
     """
     base_now = _utc_now(now)
     client = get_anon_client(user.access_token)
@@ -150,6 +156,7 @@ def list_pending_pulses(user: AuthedUser, *, now: Optional[datetime] = None) -> 
         client.table(ACTIVITY_RECORD_TABLE)
         .select("id, activity_name, chapter, scheduled_pulse_at")
         .eq("user_id", user.id)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
     pulsed_ids = _pulsed_activity_ids(user)
@@ -260,10 +267,19 @@ def _insert_pulse(
 
 
 def _pulsed_activity_ids(user: AuthedUser) -> set:
-    """The set of activity ids that already have a pulse (completed or skipped)."""
+    """The set of activity ids that already have a pulse (completed or skipped).
+
+    BOUNDED (the every-list-is-capped rule): a backstop read for the pending filter; the
+    select carries a hard MAX_BOUNDED_ROWS `.limit(...)` so a pathological pulse count cannot
+    make it unbounded. The cap is well above any real pulse count.
+    """
     client = get_anon_client(user.access_token)
     rows = _rows(
-        client.table(PULSE_RECORD_TABLE).select("activity_id").eq("user_id", user.id).execute()
+        client.table(PULSE_RECORD_TABLE)
+        .select("activity_id")
+        .eq("user_id", user.id)
+        .limit(MAX_BOUNDED_ROWS)
+        .execute()
     )
     return {str(r.get("activity_id")) for r in rows if r.get("activity_id") is not None}
 

@@ -31,7 +31,7 @@ import pytest
 import app.routes.plans as plans_routes
 import app.services.plans as plans_service
 from app.auth import AuthedUser, get_current_user
-from app.models.plan import PlanStrategy, PlanSummary
+from app.models.plan import PlanStrategy, PlanSummary, PlanSummaryPage
 from app.models.seed import Tier
 from tests.fakes_supabase import FakeClient, FakeResponse
 
@@ -138,18 +138,21 @@ SAMPLE_SUMMARY = PlanSummary(
 )
 
 
-def test_list_plans_returns_the_summary_shape(authed, monkeypatch):
+def test_list_plans_returns_the_summary_page_shape(authed, monkeypatch):
     monkeypatch.setattr(
         plans_routes.plans_service,
         "list_stored_plans",
-        lambda user, **kwargs: [SAMPLE_SUMMARY],
+        lambda user, **kwargs: PlanSummaryPage(plans=[SAMPLE_SUMMARY], next_cursor=None),
     )
     response = authed.get("/api/v1/plans")
     assert response.status_code == 200
     body = response.json()
-    assert isinstance(body, list) and len(body) == 1
-    item = body[0]
-    # The exact PlanSummary contract the app consumes.
+    # The paginated PlanSummaryPage envelope: a `plans` page + a `next_cursor`.
+    assert set(body.keys()) == {"plans", "next_cursor"}
+    assert body["next_cursor"] is None
+    assert isinstance(body["plans"], list) and len(body["plans"]) == 1
+    item = body["plans"][0]
+    # The exact PlanSummary contract the app consumes (unchanged inside the page).
     assert set(item.keys()) == {
         "activity_id",
         "chapter",
@@ -172,7 +175,7 @@ def test_list_plans_passes_the_chapter_filter_to_the_service(authed, monkeypatch
 
     def _capture(user, **kwargs):
         captured.update(kwargs)
-        return []
+        return PlanSummaryPage(plans=[], next_cursor=None)
 
     monkeypatch.setattr(plans_routes.plans_service, "list_stored_plans", _capture)
     response = authed.get("/api/v1/plans?chapter=travel")
@@ -180,12 +183,27 @@ def test_list_plans_passes_the_chapter_filter_to_the_service(authed, monkeypatch
     assert captured.get("chapter") == "travel"
 
 
+def test_list_plans_passes_the_limit_and_cursor_to_the_service(authed, monkeypatch):
+    captured = {}
+
+    def _capture(user, **kwargs):
+        captured.update(kwargs)
+        return PlanSummaryPage(plans=[], next_cursor=None)
+
+    monkeypatch.setattr(plans_routes.plans_service, "list_stored_plans", _capture)
+    response = authed.get("/api/v1/plans?limit=10&before=2026-06-10T09:00:00%2B00:00")
+    assert response.status_code == 200
+    assert captured.get("limit") == 10
+    # The keyset cursor is parsed to a datetime and threaded to the service.
+    assert captured.get("before") == datetime(2026, 6, 10, 9, 0, tzinfo=timezone.utc)
+
+
 def test_list_plans_without_a_chapter_filters_nothing(authed, monkeypatch):
     captured = {}
 
     def _capture(user, **kwargs):
         captured.update(kwargs)
-        return []
+        return PlanSummaryPage(plans=[], next_cursor=None)
 
     monkeypatch.setattr(plans_routes.plans_service, "list_stored_plans", _capture)
     response = authed.get("/api/v1/plans")
@@ -195,6 +213,13 @@ def test_list_plans_without_a_chapter_filters_nothing(authed, monkeypatch):
 
 def test_list_plans_rejects_an_unknown_chapter_422(authed):
     response = authed.get("/api/v1/plans?chapter=not-a-chapter")
+    assert response.status_code == 422
+
+
+def test_list_plans_rejects_a_limit_over_the_cap_422(authed):
+    # The route enforces 1..PLAN_LIST_MAX_LIMIT (100) via Query(le=...), so a larger ?limit
+    # is a 422 before the service is reached (the cap can never be bypassed from the wire).
+    response = authed.get("/api/v1/plans?limit=1000")
     assert response.status_code == 422
 
 
@@ -233,7 +258,10 @@ def test_list_stored_plans_newest_first_with_pulse_status(monkeypatch):
     fake = _list_fake(pulsed_ids=["act-social"])
     monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
 
-    summaries = plans_service.list_stored_plans(AUTHED, now=NOW)
+    page = plans_service.list_stored_plans(AUTHED, now=NOW)
+    summaries = page.plans
+    # Three rows is under the page size, so there is no next page.
+    assert page.next_cursor is None
 
     # Newest created_at first: new-travel (06-11), old-travel (06-10), social (06-09).
     assert [s.activity_id for s in summaries] == [
@@ -288,6 +316,63 @@ def test_list_stored_plans_chapter_filter_is_applied(monkeypatch):
     # The chapter filter is pushed down to the query alongside the user_id scope.
     assert ("chapter", "travel") in activity_select["filters"]
     assert ("user_id", "u-1") in activity_select["filters"]
+
+
+# ---------------------------------------------------------------------------
+# SERVICE: pagination (the page boundary + the keyset cursor + the cap)
+# ---------------------------------------------------------------------------
+
+
+def test_list_stored_plans_full_page_sets_next_cursor(monkeypatch):
+    # With limit=2 and three rows returned, a full page (2) plus one more means there is a
+    # next page: the page is the 2 newest, and next_cursor is the OLDEST kept row's
+    # created_at (act-old-travel, 06-10), so the app sends it back as ?before.
+    fake = _list_fake(pulsed_ids=[])
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+
+    page = plans_service.list_stored_plans(AUTHED, limit=2, now=NOW)
+
+    assert [s.activity_id for s in page.plans] == ["act-new-travel", "act-old-travel"]
+    assert page.next_cursor == datetime(2026, 6, 10, 9, 0, tzinfo=timezone.utc)
+
+
+def test_list_stored_plans_last_page_has_null_cursor(monkeypatch):
+    # With limit=5 and only three rows, the page is short (no +1 row), so there is no more
+    # to load: next_cursor is null even though all rows are returned.
+    fake = _list_fake(pulsed_ids=[])
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+
+    page = plans_service.list_stored_plans(AUTHED, limit=5, now=NOW)
+
+    assert len(page.plans) == 3
+    assert page.next_cursor is None
+
+
+def test_list_stored_plans_before_cursor_is_pushed_down(monkeypatch):
+    # A `before` cursor restricts the read to OLDER rows via a created_at keyset filter.
+    fake = _list_fake(pulsed_ids=[])
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+
+    cursor = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
+    plans_service.list_stored_plans(AUTHED, before=cursor, now=NOW)
+
+    activity_select = next(
+        c for c in fake.calls if c["table"] == "activity_record" and c["op"] == "select"
+    )
+    assert ("created_at", cursor.isoformat()) in activity_select["filters"]
+
+
+def test_list_stored_plans_clamps_an_over_cap_limit(monkeypatch):
+    # A service caller asking past the hard max is clamped to PLAN_LIST_MAX_LIMIT (the cap
+    # is enforced in the service, not only at the route's Query(le=...)). With three rows
+    # under the cap, the whole list is returned and there is no next page.
+    fake = _list_fake(pulsed_ids=[])
+    monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
+
+    page = plans_service.list_stored_plans(AUTHED, limit=10_000, now=NOW)
+
+    assert len(page.plans) == 3
+    assert page.next_cursor is None
 
 
 # ---------------------------------------------------------------------------

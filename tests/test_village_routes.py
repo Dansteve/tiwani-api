@@ -32,6 +32,7 @@ from app.models.village import (
     NeedDetail,
     NeedStatus,
     NeedSummary,
+    NeedSummaryPage,
     RosterResponse,
 )
 from tests.fakes_supabase import FakeResponse
@@ -313,14 +314,66 @@ def test_list_returns_summaries_without_exact_location_or_contact(monkeypatch):
         },
     )
     _patch_client(monkeypatch, fake)
-    needs = village_service.list_needs(AUTHED, recipient_id=RECIP)
-    assert len(needs) == 1
-    summary = needs[0]
+    page = village_service.list_needs(AUTHED, recipient_id=RECIP)
+    assert isinstance(page, NeedSummaryPage)
+    # One need is under the page size, so there is no next page.
+    assert page.next_cursor is None
+    assert len(page.needs) == 1
+    summary = page.needs[0]
     assert isinstance(summary, NeedSummary)
     assert summary.area_label == "North Leeds"
     # NeedSummary has no field for the exact location / contact at all (minimum visibility).
     assert not hasattr(summary, "location_text")
     assert not hasattr(summary, "contact_name")
+
+
+def _need_rows(*ids: str):
+    """A list of minimal open-need RPC rows in the given (board) order."""
+    return [
+        {
+            "id": nid, "status": "open", "title": f"Need {nid}", "detail": None,
+            "area_label": "North Leeds", "starts_at": None, "ends_at": None,
+            "recipient_first_name": "Sam", "claimed_by_me": False, "is_claimed": False,
+        }
+        for nid in ids
+    ]
+
+
+def test_list_needs_pages_with_a_keyset_cursor(monkeypatch):
+    # The RPC returns the full live board (three needs, in board order); a limit of 2 yields
+    # the first 2 plus a next_cursor of the second need's id (the keyset for ?after).
+    fake = VillageFakeClient(rpc_scripts={"list_village_needs": _need_rows("n1", "n2", "n3")})
+    _patch_client(monkeypatch, fake)
+
+    page = village_service.list_needs(AUTHED, recipient_id=RECIP, limit=2)
+
+    assert [n.id for n in page.needs] == ["n1", "n2"]
+    assert page.next_cursor == "n2"
+
+
+def test_list_needs_after_cursor_returns_the_next_page(monkeypatch):
+    # ?after=n2 skips up to and including n2 in the board order, so the next page is n3, and
+    # being the last (under the limit) it carries a null cursor.
+    fake = VillageFakeClient(rpc_scripts={"list_village_needs": _need_rows("n1", "n2", "n3")})
+    _patch_client(monkeypatch, fake)
+
+    page = village_service.list_needs(AUTHED, recipient_id=RECIP, limit=2, after="n2")
+
+    assert [n.id for n in page.needs] == ["n3"]
+    assert page.next_cursor is None
+
+
+def test_list_needs_unknown_cursor_restarts_from_the_top(monkeypatch):
+    # A cursor whose need has left the live board (claimed-and-done / cancelled between pages)
+    # is not found, so the page safely restarts from the top of the now-shorter board rather
+    # than erroring.
+    fake = VillageFakeClient(rpc_scripts={"list_village_needs": _need_rows("n1", "n2")})
+    _patch_client(monkeypatch, fake)
+
+    page = village_service.list_needs(AUTHED, recipient_id=RECIP, limit=5, after="gone")
+
+    assert [n.id for n in page.needs] == ["n1", "n2"]
+    assert page.next_cursor is None
 
 
 def test_detail_carries_logistics_when_the_rpc_returns_them(monkeypatch):
@@ -510,21 +563,48 @@ def test_post_need_happy_path_is_201_with_copy_key(authed, monkeypatch):
 def test_list_needs_happy_path_serializes_summaries(authed, monkeypatch):
     monkeypatch.setattr(
         village_routes.village_service, "list_needs",
-        lambda *a, **k: [
-            NeedSummary(
-                id=NEED, status=NeedStatus.OPEN, title="School run", detail=None,
-                area_label="North Leeds", recipient_first_name="Sam",
-                claimed_by_me=False, is_claimed=False,
-            )
-        ],
+        lambda *a, **k: NeedSummaryPage(
+            needs=[
+                NeedSummary(
+                    id=NEED, status=NeedStatus.OPEN, title="School run", detail=None,
+                    area_label="North Leeds", recipient_first_name="Sam",
+                    claimed_by_me=False, is_claimed=False,
+                )
+            ],
+            next_cursor=None,
+        ),
     )
     r = authed.get(f"/api/v1/village/needs?recipient_id={RECIP}")
     assert r.status_code == 200
     body = r.json()
-    assert body[0]["area_label"] == "North Leeds"
+    # The paginated NeedSummaryPage envelope: a `needs` page + a `next_cursor`.
+    assert set(body.keys()) == {"needs", "next_cursor"}
+    assert body["next_cursor"] is None
+    assert body["needs"][0]["area_label"] == "North Leeds"
     # The summary serialization carries no exact location / contact key.
-    assert "location_text" not in body[0]
-    assert "contact_name" not in body[0]
+    assert "location_text" not in body["needs"][0]
+    assert "contact_name" not in body["needs"][0]
+
+
+def test_list_needs_passes_the_limit_and_cursor_to_the_service(authed, monkeypatch):
+    captured = {}
+
+    def _capture(user, **kwargs):
+        captured.update(kwargs)
+        return NeedSummaryPage(needs=[], next_cursor=None)
+
+    monkeypatch.setattr(village_routes.village_service, "list_needs", _capture)
+    r = authed.get(f"/api/v1/village/needs?recipient_id={RECIP}&limit=10&after=need-9")
+    assert r.status_code == 200
+    assert captured.get("limit") == 10
+    assert captured.get("after") == "need-9"
+
+
+def test_list_needs_rejects_a_limit_over_the_cap_422(authed):
+    # The route enforces 1..NEED_LIST_MAX_LIMIT (100) via Query(le=...), so a larger ?limit
+    # is a 422 before the service is reached (the cap can never be bypassed from the wire).
+    r = authed.get(f"/api/v1/village/needs?recipient_id={RECIP}&limit=1000")
+    assert r.status_code == 422
 
 
 def test_post_need_title_is_required_422(authed):

@@ -52,6 +52,7 @@ from app.models.alert import AlertView, DismissResult, SignpostView
 from app.models.chapters import Chapter
 from app.models.seed import Tier
 from app.services import lci as lci_service
+from app.services.pagination import MAX_BOUNDED_ROWS
 from app.services.profile import _first, _rows, resolve_child_id
 from app.services.timestamps import parse_timestamptz
 
@@ -447,6 +448,12 @@ def _active_rows(user: AuthedUser, child_id: Optional[str]) -> List[Dict[str, An
     Filtered by user_id AND child_id, so the alerts list and the dashboard levels only
     ever see this recipient's alerts, never another recipient's pooled in. child_id None
     (no recipient yet) reads nothing (the query is skipped).
+
+    BOUNDED (the every-list-is-capped rule): there is at most one active alert per chapter
+    (the active-alert unique key is (user_id, child_id, chapter), migration 0010), so this
+    read returns at most six rows and needs no cursor; it still carries a hard MAX_BOUNDED_ROWS
+    `.limit(...)` as the runaway-read backstop. The cap is far above the six-chapter ceiling,
+    so it never truncates an alert.
     """
     if child_id is None:
         return []
@@ -457,6 +464,7 @@ def _active_rows(user: AuthedUser, child_id: Optional[str]) -> List[Dict[str, An
         .eq("user_id", user.id)
         .eq("child_id", child_id)
         .eq("dismissed", False)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
     return [r for r in rows if not r.get("dismissed")]

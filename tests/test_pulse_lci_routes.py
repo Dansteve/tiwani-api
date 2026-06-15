@@ -471,6 +471,14 @@ def test_pending_pulses_are_overdue_activities_without_a_pulse(monkeypatch):
     ids = [p.activity_id for p in pending]
     assert ids == ["act-a"]  # only the overdue, unpulsed one
     assert pending[0].chapter == "travel"
+    # BOUNDED (the every-list-is-capped rule): the pending working set is small, but the
+    # activity read still carries a safety `.limit(...)` as the runaway-read backstop.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    activity_select = next(
+        c for c in fake.calls if c["table"] == "activity_record" and c["op"] == "select"
+    )
+    assert activity_select["limit"] == MAX_BOUNDED_ROWS
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +529,21 @@ def test_chapter_lci_list_folds_scripted_pulses(monkeypatch):
     for call in fake.calls:
         if call["table"] in ("pulse_record", "lci_snapshot") and call["op"] == "select":
             assert ("child_id", CHILD_ID) in call["filters"]
+
+    # BOUNDED + the one exception (the every-list-is-capped rule): the SNAPSHOT read (the
+    # trajectory + history input, not a scoring input) carries a safety `.limit(...)`, but
+    # the PULSE read is DELIBERATELY uncapped because the chapter LCI (section 4.8,
+    # AUTHORITATIVE) folds the COMPLETE pulse history, and a row cap would change the score.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    snapshot_select = next(
+        c for c in fake.calls if c["table"] == "lci_snapshot" and c["op"] == "select"
+    )
+    assert snapshot_select["limit"] == MAX_BOUNDED_ROWS
+    pulse_select = next(
+        c for c in fake.calls if c["table"] == "pulse_record" and c["op"] == "select"
+    )
+    assert pulse_select["limit"] is None  # the authoritative fold reads every pulse
 
     assert chapters["travel"].score == 62
     assert chapters["travel"].pulse_count == 2

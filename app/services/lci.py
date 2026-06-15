@@ -53,6 +53,7 @@ from app.models.lci import (
     OverallLci,
 )
 from app.models.seed import Tier
+from app.services.pagination import MAX_BOUNDED_ROWS
 from app.services.profile import _rows, resolve_child_id
 from app.services.timestamps import parse_timestamptz
 
@@ -344,6 +345,15 @@ def _pulses_by_chapter(user: AuthedUser, child_id: Optional[str]) -> Dict[str, L
     to read and the fold is empty (the not-started baseline); the query is skipped. A row
     with an unparseable outcome or tier is skipped (the column CHECKs make that unreachable
     in practice; the guard keeps a bad row from breaking the whole dashboard).
+
+    DELIBERATELY NOT ROW-CAPPED (the every-list-is-capped rule's one exception): the chapter
+    LCI (section 4.8, AUTHORITATIVE) folds the COMPLETE pulse history per chapter, so a flat
+    row `.limit(...)` that dropped older pulses would CHANGE the score and break the spec.
+    Completeness of this scoring input wins over a safety cap (the cap exists to protect the
+    query, never to corrupt the authoritative number); the bound here is the RLS + per-chapter
+    grouping, not a row limit. The list endpoints this feeds (/lci/chapters, /lci/overall)
+    still return a bounded response (the six fixed chapters), and the snapshot read above
+    (the trajectory + history input, not a scoring input) IS capped.
     """
     if child_id is None:
         return defaultdict(list)
@@ -387,6 +397,17 @@ def _snapshots_by_chapter(user: AuthedUser, child_id: Optional[str]) -> Dict[str
     Filters lci_snapshot by user_id AND child_id (migration 0009), so the trajectory
     only ever sees this recipient's history. child_id None (no recipient yet) reads
     nothing (the query is skipped).
+
+    BOUNDED (the every-list-is-capped rule): the snapshot read powers the trajectory
+    look-back (the snapshot at/before now - 7 days) and the check-in history view (a recent,
+    14-day-staleness-windowed timeline), so it only ever needs RECENT snapshots, never the
+    whole history. The read is ordered MOST-RECENT-first and carries a hard MAX_BOUNDED_ROWS
+    `.limit(...)` so a long-running recipient's accumulating snapshots can never make it
+    unbounded. Capping the MOST RECENT is safe here (unlike the pulse fold below): snapshots
+    drive only the trajectory comparison and the history DISPLAY, never the AUTHORITATIVE
+    section 4.8 score (that folds the pulses), and the recent window the cap keeps far
+    exceeds the 7-day look-back and the 14-day history window. No cursor: the response is the
+    six fixed chapters (the LCI reads) or a recent series (the history view).
     """
     if child_id is None:
         return defaultdict(list)
@@ -396,6 +417,8 @@ def _snapshots_by_chapter(user: AuthedUser, child_id: Optional[str]) -> Dict[str
         .select("chapter, score, taken_at")
         .eq("user_id", user.id)
         .eq("child_id", child_id)
+        .order("taken_at", desc=True)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
 

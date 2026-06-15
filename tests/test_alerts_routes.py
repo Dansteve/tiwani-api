@@ -162,9 +162,15 @@ def test_list_active_alerts_renders_governed_copy(monkeypatch):
     assert "continuity needs attention" in alerts["career"].copy_text
     assert alerts["career"].action_label == "Find support"
     # The alert read was scoped to the resolved recipient (the isolation rule).
-    assert ("child_id", CHILD_ID) in next(
+    alert_select = next(
         c for c in fake.calls if c["table"] == "alert_record" and c["op"] == "select"
-    )["filters"]
+    )
+    assert ("child_id", CHILD_ID) in alert_select["filters"]
+    # BOUNDED (the every-list-is-capped rule): at most one active alert per chapter (<= 6),
+    # but the read still carries a safety `.limit(...)` as the runaway-read backstop.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    assert alert_select["limit"] == MAX_BOUNDED_ROWS
 
 
 def test_active_levels_by_chapter_feeds_the_dashboard(monkeypatch):

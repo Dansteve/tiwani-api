@@ -41,7 +41,7 @@ The routes:
 Registered under /api/v1 in main.py behind the current-user dependency.
 """
 
-from typing import List
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -52,11 +52,12 @@ from app.models.village import (
     CreateNeedRequest,
     NeedActionResult,
     NeedDetail,
-    NeedSummary,
+    NeedSummaryPage,
     RecordConsentRequest,
     RosterResponse,
 )
 from app.services import village as village_service
+from app.services.village import NEED_LIST_DEFAULT_LIMIT, NEED_LIST_MAX_LIMIT
 
 router = APIRouter()
 
@@ -157,19 +158,41 @@ def post_need(
         raise _conflict(render_copy("need.conflict.post")) from exc
 
 
-@router.get("/village/needs", response_model=List[NeedSummary])
+@router.get("/village/needs", response_model=NeedSummaryPage)
 def list_needs(
     recipient_id: str = Query(..., description="The care recipient whose needs to list"),
+    limit: int = Query(
+        default=NEED_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=NEED_LIST_MAX_LIMIT,
+        description="Max needs to return (soonest-first); capped server-side.",
+    ),
+    after: Optional[str] = Query(
+        default=None,
+        description=(
+            "Keyset cursor: return only needs after this need id in the board order "
+            "(the previous page's next_cursor). Omit for the first page."
+        ),
+    ),
     user: AuthedUser = Depends(get_current_user),
-) -> List[NeedSummary]:
-    """The member's broadcast list for a recipient (MINIMUM VISIBILITY).
+) -> NeedSummaryPage:
+    """ONE PAGE of the member's broadcast list for a recipient (MINIMUM VISIBILITY).
 
-    Returns each non-terminal need as a summary (title, detail, area-level where, the when
-    window, the recipient first name, the caller's claim flag), NEVER the exact location or
-    contact. 403 if the caller is not a member of the recipient's village.
+    Returns a NeedSummaryPage: each non-terminal need as a summary (title, detail, area-level
+    where, the when window, the recipient first name, the caller's claim flag), NEVER the
+    exact location or contact, in the board's soonest-first order, PLUS next_cursor for "Load
+    more". 403 if the caller is not a member of the recipient's village.
+
+    PAGINATED so the board never returns an unbounded number of needs (it accumulates as a
+    Coordinator posts): `limit` caps the page (default NEED_LIST_DEFAULT_LIMIT, FastAPI
+    enforces 1..NEED_LIST_MAX_LIMIT), and `after` is the keyset cursor (a need id) for the
+    next page; the response's next_cursor is the cursor to send back as `after`, or null when
+    this is the last page.
     """
     try:
-        return village_service.list_needs(user, recipient_id=recipient_id)
+        return village_service.list_needs(
+            user, recipient_id=recipient_id, limit=limit, after=after
+        )
     except village_service.NotMemberError as exc:
         raise _not_allowed(render_copy("error.not_in_village")) from exc
 

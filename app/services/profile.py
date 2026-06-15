@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
+from app.services.pagination import MAX_BOUNDED_ROWS
 
 USER_PROFILE_TABLE = "user_profile"
 CHILD_PROFILE_TABLE = "child_profile"
@@ -184,6 +185,11 @@ def list_children(user: AuthedUser) -> List[Dict[str, Any]]:
     only ever return the caller's own children. Ordered by created_at descending so the
     newest recipient is first. Now that the one-recipient guard is lifted, this returns
     every recipient the caller has created (the switcher's full list).
+
+    BOUNDED (the every-list-is-capped rule): a Coordinator manages a small set of care
+    recipients, so this list needs no cursor; the read still carries a hard MAX_BOUNDED_ROWS
+    `.limit(...)` so a pathological row count can never make the query or the switcher list
+    unbounded. The cap is well above any real recipient count, so it never truncates data.
     """
     client = get_anon_client(user.access_token)
     return _rows(
@@ -191,6 +197,7 @@ def list_children(user: AuthedUser) -> List[Dict[str, Any]]:
         .select("*")
         .eq("user_id", user.id)
         .order("created_at", desc=True)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
 

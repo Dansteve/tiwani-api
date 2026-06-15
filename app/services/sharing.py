@@ -76,6 +76,7 @@ from app.models.sharing import (
     ShareRole,
     SubjectKind,
 )
+from app.services.pagination import MAX_BOUNDED_ROWS
 from app.services.profile import (
     ChildNotFoundError,
     _first,
@@ -413,6 +414,10 @@ def roster(user: AuthedUser, *, recipient_id: str) -> Roster:
 
     client = get_anon_client(user.access_token)
 
+    # BOUNDED (the every-list-is-capped rule): a recipient's roster is a handful of members +
+    # pending invites, so the roster needs no cursor; each read still carries a hard
+    # MAX_BOUNDED_ROWS `.limit(...)` so a pathological membership/invite count can never make
+    # the query unbounded. The cap is well above any real roster size.
     membership_rows = _rows(
         client.table(MEMBERSHIP_TABLE)
         .select("id, user_id, role, granted_at, revoked_at")
@@ -420,6 +425,7 @@ def roster(user: AuthedUser, *, recipient_id: str) -> Roster:
         .is_("revoked_at", "null")
         .neq("role", "owner")
         .order("granted_at", desc=True)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
     invite_rows = _rows(
@@ -429,6 +435,7 @@ def roster(user: AuthedUser, *, recipient_id: str) -> Roster:
         .is_("redeemed_at", "null")
         .is_("revoked_at", "null")
         .order("created_at", desc=True)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
 
@@ -530,6 +537,11 @@ def shared_with_me(user: AuthedUser) -> SharedWithMe:
     the recipient's FIRST name through the capped member card path (so a viewer never
     learns more than the first name from this list), and attaches the governed linked-state
     copy_key. This is the viewer's entry list to the shared card.
+
+    BOUNDED (the every-list-is-capped rule): a caller is shared a small set of recipients, so
+    this list needs no cursor; the read still carries a hard MAX_BOUNDED_ROWS `.limit(...)`
+    so a pathological membership count can never make the query or the switcher unbounded.
+    The cap is well above any real shared-with-me count, so it never truncates data.
     """
     client = get_anon_client(user.access_token)
     rows = _rows(
@@ -539,6 +551,7 @@ def shared_with_me(user: AuthedUser) -> SharedWithMe:
         .neq("role", "owner")
         .is_("revoked_at", "null")
         .order("granted_at", desc=True)
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
     recipients: List[SharedRecipient] = []

@@ -29,6 +29,7 @@ Endpoints:
                                             chapter (the app's activity picker).
 """
 
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -38,11 +39,12 @@ from app.models.chapters import Chapter
 from app.models.child_profile import Tag
 from app.models.plan import (
     ActivityOption,
-    PlanSummary,
+    PlanSummaryPage,
     PreparationPlan,
     PreparePlanRequest,
 )
 from app.services import plans as plans_service
+from app.services.plans import PLAN_LIST_DEFAULT_LIMIT, PLAN_LIST_MAX_LIMIT
 
 router = APIRouter()
 
@@ -93,23 +95,42 @@ def create_plan(
         ) from exc
 
 
-@router.get("/plans", response_model=List[PlanSummary])
+@router.get("/plans", response_model=PlanSummaryPage)
 def list_plans(
     chapter: Optional[str] = Query(default=None),
+    limit: int = Query(
+        default=PLAN_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=PLAN_LIST_MAX_LIMIT,
+        description="Max plans to return (newest first); capped server-side.",
+    ),
+    before: Optional[datetime] = Query(
+        default=None,
+        description=(
+            "Keyset cursor: return only plans older than this created_at "
+            "(the previous page's next_cursor). Omit for the first page."
+        ),
+    ),
     user: AuthedUser = Depends(get_current_user),
-) -> List[PlanSummary]:
-    """The caller's STORED plans (their activity_records), newest first, as summaries.
+) -> PlanSummaryPage:
+    """ONE PAGE of the caller's STORED plans (their activity_records), newest first.
 
-    Returns one PlanSummary per stored plan: the identity, the stored tier + total, when
-    it was prepared, and the pulse status (whether a pulse exists, and whether one is
-    currently due). STORED values only, the engine is not re-run. The optional ?chapter=
-    filter narrows to one Life Chapter (an unknown chapter code is a 422). The reads are
-    user-scoped (the current-user dependency + RLS), so only the caller's own plans are
-    listed.
+    Returns a PlanSummaryPage: one PlanSummary per stored plan (the identity, the stored
+    tier + total, when it was prepared, and the pulse status: whether a pulse exists, and
+    whether one is currently due), PLUS next_cursor for "Load more". STORED values only,
+    the engine is not re-run. The optional ?chapter= filter narrows to one Life Chapter (an
+    unknown chapter code is a 422).
+
+    PAGINATED so the read never pulls every plan (prepared plans accumulate per user): `limit`
+    caps the page (default PLAN_LIST_DEFAULT_LIMIT, FastAPI enforces 1..PLAN_LIST_MAX_LIMIT),
+    and `before` is the keyset cursor (a created_at) for the next, older page; the response's
+    next_cursor is the cursor to send back as `before`, or null when this is the last page.
+    The reads are user-scoped (the current-user dependency + RLS), so only the caller's own
+    plans are listed.
     """
     if chapter is not None:
         _validate_chapter(chapter)
-    return plans_service.list_stored_plans(user, chapter=chapter)
+    return plans_service.list_stored_plans(user, chapter=chapter, limit=limit, before=before)
 
 
 @router.get("/plans/{activity_id}", response_model=PreparationPlan)

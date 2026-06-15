@@ -50,6 +50,7 @@ class FakeQuery:
         self._payload: Any = None
         self._filters: List[Tuple[str, Any]] = []
         self._single = False
+        self._limit: Optional[int] = None
 
     # --- operations -------------------------------------------------------
     def select(self, *args: Any, **kwargs: Any) -> "FakeQuery":
@@ -100,7 +101,11 @@ class FakeQuery:
     def order(self, *args: Any, **kwargs: Any) -> "FakeQuery":
         return self
 
-    def limit(self, *args: Any, **kwargs: Any) -> "FakeQuery":
+    def limit(self, value: Any = None, *args: Any, **kwargs: Any) -> "FakeQuery":
+        # PostgREST `.limit(n)` (the page size for a growable list, the safety cap for a
+        # bounded one). Recorded so a test can assert the cap/page bound was applied; the
+        # fake does no actual truncation, so a test scripts the rows it expects.
+        self._limit = value
         return self
 
     def single(self) -> "FakeQuery":
@@ -120,6 +125,7 @@ class FakeQuery:
                 "payload": self._payload,
                 "filters": list(self._filters),
                 "single": self._single,
+                "limit": self._limit,
             }
         )
         key = (self._table, self._op or "select")

@@ -432,6 +432,18 @@ def test_service_roster_lists_members_and_pending_invites(monkeypatch):
     # The pending entry carries the invited email; the active entry does not leak it.
     pending = [e for e in out.entries if e.kind == RosterStatus.PENDING][0]
     assert pending.email == "carol@example.com"
+    # BOUNDED (the every-list-is-capped rule): a roster is a handful of members + pending
+    # invites, but BOTH reads carry a safety `.limit(...)` as the runaway-read backstop.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    member_select = next(
+        c for c in fake.calls if c["table"] == "recipient_membership" and c["op"] == "select"
+    )
+    invite_select = next(
+        c for c in fake.calls if c["table"] == "recipient_invite" and c["op"] == "select"
+    )
+    assert member_select["limit"] == MAX_BOUNDED_ROWS
+    assert invite_select["limit"] == MAX_BOUNDED_ROWS
 
 
 def test_service_revoke_access_soft_revokes_and_excludes_owner(monkeypatch):
@@ -508,6 +520,14 @@ def test_service_shared_with_me_lists_recipients_first_name_only(monkeypatch):
     assert r.recipient_id == "recip-1"
     assert r.recipient_first_name == "Ade"  # first name only, via the ceiling read
     assert r.copy_key == sharing_copy.LINKED_COPY_KEY
+    # BOUNDED (the every-list-is-capped rule): a caller is shared a small set of recipients,
+    # but the membership read still carries a safety `.limit(...)` as the runaway-read backstop.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    member_select = next(
+        c for c in fake.calls if c["table"] == "recipient_membership" and c["op"] == "select"
+    )
+    assert member_select["limit"] == MAX_BOUNDED_ROWS
 
 
 # ===========================================================================

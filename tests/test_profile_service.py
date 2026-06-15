@@ -299,6 +299,11 @@ def test_list_children_returns_callers_rows_scoped_by_user(monkeypatch):
     result = svc.list_children(USER)
     assert [r["id"] for r in result] == ["c-2", "c-1"]
     assert ("user_id", "u-1") in anon.calls[0]["filters"]  # RLS-scoped to the caller
+    # BOUNDED (the every-list-is-capped rule): the read carries a safety `.limit(...)` so a
+    # pathological recipient count can never make the switcher query unbounded.
+    from app.services.pagination import MAX_BOUNDED_ROWS
+
+    assert anon.calls[0]["limit"] == MAX_BOUNDED_ROWS
 
 
 def test_update_child_scopes_by_id_and_user(monkeypatch):

@@ -16,6 +16,9 @@ on the claimer-or-owner detail view.
     WHEN window, an AREA-level where (never the exact place), the status, the recipient's
     FIRST name, and whether the CALLER holds the claim. NO contact, NO exact location: the
     list is minimum-visibility (refinement 2 + 3).
+  - NeedSummaryPage: the PAGINATED GET /api/v1/village/needs response (a capped page of
+    NeedSummary rows + the keyset cursor), so the live board never reads an unbounded number
+    of needs (the /cards precedent; the board accumulates as a Coordinator posts needs).
   - NeedDetail: the single-need view. Same fields as NeedSummary PLUS the exact
     location_text + contact_name + contact_phone, which are populated ONLY when the caller
     is the live claimer of this need or the recipient's owner (the api returns them null
@@ -101,6 +104,27 @@ class NeedSummary(BaseModel):
     recipient_first_name: str
     claimed_by_me: bool
     is_claimed: bool
+
+
+class NeedSummaryPage(BaseModel):
+    """One PAGE of the member's broadcast list (GET /api/v1/village/needs).
+
+    The list is paginated so the live board never returns an unbounded number of needs (the
+    board accumulates as a Coordinator posts; the /cards precedent). Each request returns at
+    most a capped number of needs, in the board's soonest-first order (the same order the
+    list_village_needs RPC returns: soonest scheduled / oldest first), plus the signal for
+    whether more exist:
+      needs        the page of NeedSummary rows, in the board order (member-gated + RLS).
+      next_cursor  the keyset cursor to pass back as ?after to fetch the NEXT page, or null
+                   when this is the last page. It is the id of the LAST need on a FULL page;
+                   the app sends it straight back as `after`, and the api returns the needs
+                   that fall AFTER it in the board order. An id cursor (not an offset) is
+                   used because the board's order is deterministic, so it is stable as needs
+                   are claimed / completed. It is a need id, not PII.
+    """
+
+    needs: List[NeedSummary]
+    next_cursor: Optional[str] = None
 
 
 class NeedDetail(BaseModel):

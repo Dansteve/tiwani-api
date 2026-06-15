@@ -35,6 +35,7 @@ from app.auth import AuthedUser
 from app.db import get_anon_client, get_service_client
 from app.models.subscription import MySubscription, PlanTier, SubscriptionEvent
 from app.models.user_profile import SubscriptionTier
+from app.services.pagination import MAX_BOUNDED_ROWS
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,11 @@ def list_plans(user: AuthedUser) -> List[PlanTier]:
     plan_tier is read-for-authenticated reference data; this returns only the active tiers
     so a retired tier disappears from the app without deleting its historical subscriptions.
     Ordered by sort then key for a deterministic list.
+
+    BOUNDED (the every-list-is-capped rule): there are only a few plan tiers (a fixed,
+    curated price list), so the list needs no cursor; the read still carries a hard
+    MAX_BOUNDED_ROWS `.limit(...)` so a pathological tier count can never make the query
+    unbounded. The cap is far above any real tier count.
     """
     client = get_anon_client(user.access_token)
     rows = _rows(
@@ -75,6 +81,7 @@ def list_plans(user: AuthedUser) -> List[PlanTier]:
         .select("*")
         .eq("active", True)
         .order("sort")
+        .limit(MAX_BOUNDED_ROWS)
         .execute()
     )
     return [PlanTier.model_validate(row) for row in rows]

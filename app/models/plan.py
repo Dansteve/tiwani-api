@@ -17,6 +17,9 @@ the app's mirror.
   - PlanSummary: one row of GET /api/v1/plans (the caller's stored plans, newest
     first): the lightweight identity + score + the pulse status, so the app can list
     "your prepared plans" without fetching each full plan.
+  - PlanSummaryPage: the PAGINATED GET /api/v1/plans response (a capped page of
+    PlanSummary rows + the keyset cursor), so the list never reads every stored plan
+    (prepared plans accumulate per user over time; the /cards precedent).
   - ActivityOption: one row of the activity picker (GET /api/v1/chapters/{chapter}
     /activities): a scenario's code, name, and base tier for the app's list.
 
@@ -180,6 +183,27 @@ class PlanSummary(BaseModel):
     created_at: datetime
     pulse_exists: bool = False
     pulse_due: bool = False
+
+
+class PlanSummaryPage(BaseModel):
+    """One PAGE of the caller's stored plans (GET /api/v1/plans), newest first.
+
+    The list endpoint is paginated so it never reads every plan the Coordinator has ever
+    prepared (prepared plans accumulate per user over time): each request returns at most a
+    capped number of rows (the api clamps a larger ?limit), newest first, plus the signal
+    for whether more exist:
+      plans        the page of PlanSummary rows, newest first (RLS-scoped to the caller).
+      next_cursor  the keyset cursor to pass back as ?before to fetch the NEXT (older) page,
+                   or null when this is the last page. It is the created_at of the last row
+                   on a FULL page (a page shorter than the limit has no more, so next_cursor
+                   is null). The app sends it straight back as `before`; it is a timestamp,
+                   not PII. A keyset cursor (not an offset) is used because the list is
+                   already ordered by created_at descending, so it is stable as new plans
+                   are prepared at the top. Mirrors the /cards CardPage precedent.
+    """
+
+    plans: List[PlanSummary]
+    next_cursor: Optional[datetime] = None
 
 
 class ActivityOption(BaseModel):

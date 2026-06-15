@@ -47,6 +47,11 @@ def list_active_recipients(user: AuthedUser) -> List[ActiveRecipient]:
     caller. De-duped by id (an owner is never a non-owner member of their own recipient, but a
     defensive guard keeps a single row per recipient regardless). Empty for a brand-new user
     with no recipients and no shares (a valid switcher state -> a 200 empty list).
+
+    BOUNDED (the every-list-is-capped rule): a Coordinator manages a small set of recipients,
+    so the switcher list needs no cursor; both underlying reads (list_children and
+    shared_with_me) carry their own MAX_BOUNDED_ROWS cap, so this composed list is bounded
+    transitively without truncating any real recipient.
     """
     recipients: List[ActiveRecipient] = []
     seen: Set[str] = set()
