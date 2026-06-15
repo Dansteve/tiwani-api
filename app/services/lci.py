@@ -27,7 +27,7 @@ that old yet, the chapter reads "building your picture" (not enough data).
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from app.auth import AuthedUser
@@ -36,6 +36,7 @@ from app.engines.lci import (
     Outcome,
     PulsePoint,
     Snapshot,
+    band_for,
     chapter_score,
     label_for,
     overall_score,
@@ -44,13 +45,25 @@ from app.engines.lci import (
     trajectory,
 )
 from app.models.chapters import Chapter
-from app.models.lci import ChapterLci, OverallLci
+from app.models.lci import (
+    ChapterLci,
+    LciHistory,
+    LciHistoryPoint,
+    LciSeries,
+    OverallLci,
+)
 from app.models.seed import Tier
 from app.services.profile import _rows, resolve_child_id
 from app.services.timestamps import parse_timestamptz
 
 PULSE_RECORD_TABLE = "pulse_record"
 LCI_SNAPSHOT_TABLE = "lci_snapshot"
+
+# The check-in history staleness window (section 4.3 / Decisions.md D15 honesty-in-time):
+# lci_snapshot rows are written event-driven (one per pulse), so a chapter with no new
+# reading for this many days is "stale", and the history view STOPS rather than carry the
+# last score forward as a live in-band line. The api owns this flag; the app renders it.
+HISTORY_STALE_AFTER_DAYS = 14
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +157,123 @@ def _overall_prior(user: AuthedUser, child_id: Optional[str], now: datetime) -> 
         snapshot_score_as_of(snaps, look_back) for snaps in snapshots_by_chapter.values()
     ]
     return overall_score(prior_scores)
+
+
+# ---------------------------------------------------------------------------
+# read (the check-in history view: GET /api/v1/lci/history)
+# ---------------------------------------------------------------------------
+
+
+def lci_history(
+    user: AuthedUser, *, child_id: Optional[str] = None, now: Optional[datetime] = None
+) -> LciHistory:
+    """ONE care recipient's DISCRETE LCI history: the overall + per-chapter recorded points.
+
+    The read behind the "Your check-in history" view (the de-risked timeline). Resolves
+    the recipient (resolve_child_id), reads only THAT recipient's stored lci_snapshot rows
+    (RLS + child_id scoped), and turns them into discrete points: each chapter series is
+    its snapshots in time order (score + the section 4.3 band), and the overall series is
+    the equal-weighted overall reconstructed at each distinct snapshot instant (the same
+    mean the live overall uses, never a re-scored value). Every series carries the honesty
+    signals the app cannot lie without: reading_count (the three-reading floor),
+    latest_taken_at (after which the series stops), and is_stale (older than the staleness
+    window). This is a READ of stored snapshots: no new engine, no new score, no decline
+    language. Always returns all six chapter series in the stable Chapter order.
+    """
+    base_now = _utc_now(now)
+    resolved_child_id = resolve_child_id(user, child_id)
+    snapshots_by_chapter = _snapshots_by_chapter(user, resolved_child_id)
+
+    chapter_series = [
+        _series_from_snapshots(
+            chapter.value, snapshots_by_chapter.get(chapter.value, []), base_now
+        )
+        for chapter in Chapter
+    ]
+    overall_series = _overall_series(snapshots_by_chapter, base_now)
+
+    return LciHistory(
+        overall=overall_series,
+        chapters=chapter_series,
+        generated_at=base_now,
+    )
+
+
+def _series_from_snapshots(scope: str, snapshots: List[Snapshot], now: datetime) -> LciSeries:
+    """One scope's LciSeries from its stored snapshots: discrete points + the honesty signals.
+
+    The snapshots are sorted ascending by instant and each becomes a discrete point
+    carrying its real timestamp, its score, and the section 4.3 band (band_for). The
+    honesty signals are derived here so the api owns them: reading_count is how many real
+    readings there are (the three-reading floor), latest_taken_at is the last reading's
+    instant (the series stops there), and is_stale is true when that last reading is older
+    than the staleness window (the view then degrades to "no reading since [date]" rather
+    than carrying the score forward).
+    """
+    ordered = sorted(snapshots, key=lambda s: s.taken_at)
+    points = [
+        LciHistoryPoint(taken_at=s.taken_at, score=s.score, band=band_for(s.score))
+        for s in ordered
+    ]
+    latest = ordered[-1].taken_at if ordered else None
+    return LciSeries(
+        scope=scope,
+        points=points,
+        reading_count=len(points),
+        latest_taken_at=latest,
+        is_stale=_is_stale(latest, now),
+    )
+
+
+def _overall_series(snapshots_by_chapter: Dict[str, List[Snapshot]], now: datetime) -> LciSeries:
+    """The OVERALL discrete history: the equal-weighted overall at each distinct snapshot instant.
+
+    Walks the union of every chapter's snapshot instants in time order; at each instant it
+    takes each chapter's latest-known score at or before that instant and averages the ones
+    that exist (overall_score, the same equal-weighted mean the live overall uses), giving
+    the overall value then. Consecutive duplicate values are collapsed so a point is emitted
+    only where the overall actually CHANGED (a real reading moment), keeping the series the
+    honest set of distinct overall readings rather than a dense restatement. No re-scoring:
+    every input score is a stored snapshot value. The honesty signals mirror a chapter
+    series (reading_count, latest_taken_at, is_stale).
+    """
+    instants = sorted({s.taken_at for snaps in snapshots_by_chapter.values() for s in snaps})
+
+    points: List[LciHistoryPoint] = []
+    last_score: Optional[int] = None
+    for instant in instants:
+        scores = [
+            snapshot_score_as_of(snaps, instant) for snaps in snapshots_by_chapter.values()
+        ]
+        value = overall_score(scores)
+        if value is None or value == last_score:
+            continue
+        points.append(
+            LciHistoryPoint(taken_at=instant, score=value, band=band_for(value))
+        )
+        last_score = value
+
+    latest = points[-1].taken_at if points else None
+    return LciSeries(
+        scope="overall",
+        points=points,
+        reading_count=len(points),
+        latest_taken_at=latest,
+        is_stale=_is_stale(latest, now),
+    )
+
+
+def _is_stale(latest_taken_at: Optional[datetime], now: datetime) -> bool:
+    """True when the last reading is older than the staleness window (stale = stop, do not lie).
+
+    No reading at all is not "stale" (it is the empty/building state, handled by
+    reading_count); a series is stale only when it HAS a last reading and that reading is
+    older than HISTORY_STALE_AFTER_DAYS, so the view shows "no reading since [date]" instead
+    of a live in-band line.
+    """
+    if latest_taken_at is None:
+        return False
+    return now - latest_taken_at > timedelta(days=HISTORY_STALE_AFTER_DAYS)
 
 
 # ---------------------------------------------------------------------------

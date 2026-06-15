@@ -75,6 +75,49 @@ class Trajectory(str, Enum):
     BUILDING_PICTURE = "building_picture"
 
 
+# The dashboard band edges (Product.md section 4.3): a score is read as a coloured
+# ZONE, not a precise altitude. >= 60 is stable, 30 to 59 is under pressure, below 30
+# is needs-attention; a missing score is the neutral none band. These mirror the app's
+# lib/format.lciBand thresholds exactly so the api and the app classify identically.
+# The api owns the band on the discrete check-in-history points (the honest "read it as
+# a zone, never a 2-significant-figure plotted line" rule, the researcher's verdict).
+STABLE_BAND_FLOOR = 60
+PRESSURE_BAND_FLOOR = 30
+
+
+class LciBand(str, Enum):
+    """The section 4.3 display band for an LCI score, as the app's LciBand union codes.
+
+    The values match tiwani-app's `LciBand` type (none / stable / pressure / critical)
+    so the wire contract needs no remapping. This is the coloured ZONE a history point
+    is read as: deliberately NOT a precise plotted value, so the check-in history view
+    shows a band, never a 2-significant-figure axis (the researcher's honesty
+    condition). A null score is the neutral `none` band.
+    """
+
+    NONE = "none"
+    STABLE = "stable"
+    PRESSURE = "pressure"
+    CRITICAL = "critical"
+
+
+def band_for(score: Optional[int]) -> LciBand:
+    """The section 4.3 display band for a score: none / stable / pressure / critical.
+
+    A pure classification of a score the engine already produced (never a re-derivation
+    of the index): null is the neutral `none` band, >= 60 is stable, 30 to 59 is under
+    pressure, below 30 is needs-attention (critical). Used by the check-in history read
+    so each discrete recorded point carries the api-owned band the app renders as a zone.
+    """
+    if score is None:
+        return LciBand.NONE
+    if score >= STABLE_BAND_FLOOR:
+        return LciBand.STABLE
+    if score >= PRESSURE_BAND_FLOOR:
+        return LciBand.PRESSURE
+    return LciBand.CRITICAL
+
+
 @dataclass(frozen=True)
 class PulsePoint:
     """The minimal pulse data the index folds: outcome, stored tier, timestamp.
