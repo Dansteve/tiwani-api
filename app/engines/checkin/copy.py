@@ -126,7 +126,7 @@ _CARERS_UK = Signpost("Carers UK", "https://www.carersuk.org")
 _LOCAL_CARER_ORGS = Signpost("Local carer support organisations", None)
 _SENDIASS = Signpost(
     "SENDIASS (your local SEND advice service)",
-    "https://www.kids.org.uk/sendiass",
+    "https://www.kids.org.uk/kids-sendiass/",
 )
 
 # The crisis-capable CARER route (the psychiatrist's conditions 1 + 5). These are
