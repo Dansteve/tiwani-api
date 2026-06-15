@@ -22,12 +22,14 @@ from datetime import datetime, timezone
 import pytest
 
 from app.engines.lci import (
+    LciBand,
     Outcome,
     PulsePoint,
     Snapshot,
     Trajectory,
     adjustment_for,
     apply_adjustment,
+    band_for,
     chapter_score,
     label_for,
     overall_score,
@@ -252,3 +254,25 @@ def test_snapshot_score_as_of_is_none_when_no_old_enough_snapshot():
     look_back = prior_instant(now)
     snaps = [Snapshot(60, datetime(2026, 6, 18, 9, 0, tzinfo=timezone.utc))]
     assert snapshot_score_as_of(snaps, look_back) is None
+
+
+# ---------------------------------------------------------------------------
+# Display band (section 4.3 zone, used by the check-in history points)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (None, LciBand.NONE),  # no score -> neutral none band
+        (0, LciBand.CRITICAL),  # below 30 -> needs attention
+        (29, LciBand.CRITICAL),
+        (30, LciBand.PRESSURE),  # 30 to 59 -> under pressure (lower edge)
+        (45, LciBand.PRESSURE),
+        (59, LciBand.PRESSURE),  # upper edge of pressure
+        (60, LciBand.STABLE),  # >= 60 -> stable (lower edge)
+        (100, LciBand.STABLE),
+    ],
+)
+def test_band_for_matches_the_section_4_3_edges(score, expected):
+    assert band_for(score) == expected

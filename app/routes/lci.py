@@ -14,6 +14,11 @@ Endpoints:
   GET /api/v1/lci/chapters  the per-chapter LCI list, one per Life Chapter
                             {chapter, score|null, trajectory, pulse_count, label,
                             timestamp}.
+  GET /api/v1/lci/history   the DISCRETE recorded LCI history (the "Your check-in
+                            history" view): the overall + per-chapter series of stored
+                            snapshots, each point a real instant + its section 4.3 band,
+                            plus the honesty signals (reading_count, latest_taken_at,
+                            is_stale). A read of stored snapshots, not a new engine.
 """
 
 from typing import List, Optional
@@ -21,7 +26,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
-from app.models.lci import ChapterLci, OverallLci
+from app.models.lci import ChapterLci, LciHistory, OverallLci
 from app.services import lci as lci_service
 from app.services import profile as profile_service
 
@@ -74,6 +79,32 @@ def get_chapter_lci(
     """
     try:
         return lci_service.chapter_lci_list(user, child_id=child_id)
+    except profile_service.ChildNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No care recipient found",
+        ) from exc
+
+
+@router.get("/lci/history", response_model=LciHistory)
+def get_lci_history(
+    user: AuthedUser = Depends(get_current_user),
+    child_id: Optional[str] = _CHILD_ID_QUERY,
+) -> LciHistory:
+    """ONE care recipient's DISCRETE LCI history for the "Your check-in history" view (section 4.8).
+
+    The overall series plus one series per Life Chapter (six, stable order), each a set of
+    DISCRETE recorded points (a stored lci_snapshot at its real instant, with the section
+    4.3 band), carrying the honesty signals the app renders honestly: reading_count (the
+    three-reading floor, below which the app draws no line), latest_taken_at (after which
+    the series stops), and is_stale (the api flags an out-of-date series so the app degrades
+    to "no reading since [date]" instead of a live line). A READ of stored snapshots, never
+    a new score or decline language. Every value is for the selected recipient only.
+    child_id selects the recipient (default the sole one); a child_id the caller does not
+    own is a 404.
+    """
+    try:
+        return lci_service.lci_history(user, child_id=child_id)
     except profile_service.ChildNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
