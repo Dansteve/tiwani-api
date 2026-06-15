@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.routes import (
     profile, chapters, plans, pulses, lci, alerts, cards, account,
-    strategies, sharing, village, billing,
+    strategies, sharing, village, billing, checkin,
 )
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -135,6 +135,14 @@ app.include_router(village.router, prefix="/api/v1", tags=["v1 Village Hub"])
 # SDK calls are STUBBED (PENDING OWNER STRIPE KEYS); the entitlement gate
 # (app/services/entitlements.py) is the one server-side allowlist gate for paid features.
 app.include_router(billing.router, prefix="/api/v1", tags=["v1 Subscription & Billing"])
+# The carer check-in moment (ProductReview.md item 9, the psychiatrist board's SAFE shape):
+# an OPTIONAL, signpost-only "A moment for you" read that acknowledges the carer and points
+# to community/statutory support PLUS a crisis-capable carer route. It NEVER scores the carer
+# and stores NOTHING (ephemeral; no DB, no analytics). The copy is GOVERNED + guarded
+# (app/engines/checkin, clinical AND hollow-affirmation words barred). GATED OFF by default
+# (app/engines/checkin/flag.py): the route 404s until psychiatrist + DPO sign-off enables
+# CHECKIN_MOMENT_ENABLED (Task 12). Registered under /api/v1 behind the current-user dependency.
+app.include_router(checkin.router, prefix="/api/v1", tags=["v1 Check-in Moment"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.
