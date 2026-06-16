@@ -37,6 +37,10 @@ The routes:
   POST /api/v1/village/needs/{need_id}/drop      AUTH, claimer. Step back (AUTO RE-BROADCAST).
   POST /api/v1/village/needs/{need_id}/cancel    AUTH, owner. Cancel a need (terminal).
   GET  /api/v1/village/roster?recipient_id=...   AUTH, member. "Who is in [name]'s village".
+  GET  /api/v1/village/notifications?recipient_id=  AUTH, owner. The Coordinator's "this is
+                                                handled, you can let it go" covered notices
+                                                (the done needs as governed CoveredNotices).
+                                                403 if not the owner.
 
 Registered under /api/v1 in main.py behind the current-user dependency.
 """
@@ -49,6 +53,7 @@ from app.auth import AuthedUser, get_current_user
 from app.engines.village import render as render_copy
 from app.models.village import (
     ConsentRecorded,
+    CoveredNoticesResponse,
     CreateNeedRequest,
     NeedActionResult,
     NeedDetail,
@@ -353,3 +358,32 @@ def get_roster(
     access".
     """
     return village_service.get_roster(user, recipient_id=recipient_id)
+
+
+# ---------------------------------------------------------------------------
+# covered notices ("this is handled, you can let it go")
+# ---------------------------------------------------------------------------
+
+
+@router.get("/village/notifications", response_model=CoveredNoticesResponse)
+def list_covered_notifications(
+    recipient_id: str = Query(
+        ..., description="The care recipient whose covered notices to list"
+    ),
+    user: AuthedUser = Depends(get_current_user),
+) -> CoveredNoticesResponse:
+    """The Coordinator's "this is handled, you can let it go" notices (the Village "covered").
+
+    When a need reaches done (the claimer completed it), the OWNER who posted it learns it is
+    COVERED, the relief moment, rather than seeing a silent status flip. Returns the recipient's
+    done needs as governed CoveredNotices (newest-completed first, capped), each carrying the
+    need title + the recipient first name + the governed message ONLY (never the helper
+    identity, the exact location, or the contact: the minimum-visibility rule). OWNER-only: a
+    non-owner / non-member gets a 403 (the relief is the Coordinator's). Computed from the
+    existing done status, so the app sees a need is covered even off the board (the /notifications
+    surface) and the Bell gets its "new" dot.
+    """
+    try:
+        return village_service.list_covered_notifications(user, recipient_id=recipient_id)
+    except village_service.NotOwnerError as exc:
+        raise _not_allowed(render_copy("error.family_only")) from exc

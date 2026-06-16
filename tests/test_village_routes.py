@@ -28,6 +28,7 @@ import app.services.village as village_service
 from app.auth import AuthedUser, get_current_user
 from app.models.village import (
     ConsentRecorded,
+    CoveredNoticesResponse,
     NeedActionResult,
     NeedDetail,
     NeedStatus,
@@ -106,12 +107,27 @@ class ScriptedNameQuery:
 
 
 class VillageFakeClient:
-    """A fake Supabase client for the village service: scripted RPCs + a name row + roster."""
+    """A fake Supabase client for the village service: scripted RPCs + a name row + roster.
 
-    def __init__(self, *, rpc_scripts: Dict[str, Any], name_row=None, roster_rows=None):
+    table() routes per table name: recipient_membership -> roster_rows (the multi-row roster
+    read AND the single-row owner-gate read of the covered-notices surface both go through it;
+    a test scripts whichever shape its flow needs), village_need -> village_need_rows (the
+    covered/done needs the owner notices read), everything else -> name_row (the child_profile
+    first-name read).
+    """
+
+    def __init__(
+        self,
+        *,
+        rpc_scripts: Dict[str, Any],
+        name_row=None,
+        roster_rows=None,
+        village_need_rows=None,
+    ):
         self.rpc_scripts = rpc_scripts
         self.name_row = name_row if name_row is not None else {"name": "Sam Taylor"}
         self.roster_rows = roster_rows
+        self.village_need_rows = village_need_rows
         self.rpc_log: List[Tuple[str, Any]] = []
 
     def rpc(self, fn: str, params: Any = None):
@@ -120,6 +136,8 @@ class VillageFakeClient:
     def table(self, name: str):
         if name == "recipient_membership":
             return ScriptedNameQuery(self.roster_rows)
+        if name == "village_need":
+            return ScriptedNameQuery(self.village_need_rows)
         return ScriptedNameQuery(self.name_row)
 
 
@@ -150,6 +168,7 @@ def test_every_village_route_requires_authentication(client):
         f"/api/v1/village/needs?recipient_id={RECIP}",
         f"/api/v1/village/needs/{NEED}",
         f"/api/v1/village/roster?recipient_id={RECIP}",
+        f"/api/v1/village/notifications?recipient_id={RECIP}",
     ]
     for path in gets:
         assert client.get(path).status_code == 401, path
@@ -467,6 +486,109 @@ def test_roster_returns_active_members_with_is_me(monkeypatch):
 
 
 # ===========================================================================
+# SERVICE: covered ("this is handled, you can let it go") notices, OWNER-only
+# ===========================================================================
+
+
+def test_covered_notices_returns_done_needs_with_governed_message(monkeypatch):
+    # The owner of the recipient sees its DONE needs as governed CoveredNotices, newest first,
+    # each carrying the need title + the recipient first name + the governed relief message.
+    fake = VillageFakeClient(
+        rpc_scripts={},
+        name_row={"name": "Sam Taylor"},
+        roster_rows={"role": "owner"},  # the owner-gate read (a single role row)
+        village_need_rows=[
+            {"id": "n-1", "title": "Pick Sam up from swimming",
+             "completed_at": None, "status": "done"},
+            {"id": "n-2", "title": "Drop off the prescription form",
+             "completed_at": None, "status": "done"},
+        ],
+    )
+    _patch_client(monkeypatch, fake)
+    result = village_service.list_covered_notifications(AUTHED, recipient_id=RECIP)
+    assert isinstance(result, CoveredNoticesResponse)
+    assert result.recipient_first_name == "Sam"
+    assert {n.need_id for n in result.notices} == {"n-1", "n-2"}
+    first = next(n for n in result.notices if n.need_id == "n-1")
+    assert first.title == "Pick Sam up from swimming"
+    assert first.copy_key == "notification.covered"
+    # The GOVERNED message is the relief line with the title + first name substituted; it is
+    # rendered, not hand-written, and the app shows it verbatim.
+    assert "Pick Sam up from swimming" in first.message
+    assert "Sam's village" in first.message
+
+
+def test_covered_notices_carry_no_helper_identity_or_logistics(monkeypatch):
+    # MINIMUM VISIBILITY: a covered notice is the need title + first name + governed copy ONLY.
+    # The CoveredNotice model has no contact / location field, and the message never names WHO
+    # helped (the no-metric red lines bar a contribution signal).
+    fake = VillageFakeClient(
+        rpc_scripts={},
+        name_row={"name": "Sam Taylor"},
+        roster_rows={"role": "owner"},
+        village_need_rows=[
+            {"id": "n-1", "title": "School pickup", "completed_at": None, "status": "done"},
+        ],
+    )
+    _patch_client(monkeypatch, fake)
+    result = village_service.list_covered_notifications(AUTHED, recipient_id=RECIP)
+    notice = result.notices[0]
+    # No exact-logistics / contact / helper-identity fields exist on the notice shape at all.
+    fields = set(notice.model_dump().keys())
+    assert fields == {
+        "need_id", "title", "recipient_first_name", "completed_at", "copy_key", "message",
+    }
+    assert "helper" not in notice.message.lower() or "a helper" in notice.message.lower()
+    # The generic "a helper" framing is allowed (it says SOMEONE covered it), never a name.
+
+
+def test_covered_notices_non_owner_member_is_blocked(monkeypatch):
+    # A non-owner MEMBER (role viewer) is NOT the owner, so the owner-gate raises NotOwnerError:
+    # the "covered" relief is the Coordinator's. The done-needs read is never reached.
+    fake = VillageFakeClient(
+        rpc_scripts={},
+        name_row={"name": "Sam Taylor"},
+        roster_rows={"role": "viewer"},  # an active member, but not the owner
+        village_need_rows=[
+            {"id": "n-1", "title": "School pickup", "completed_at": None, "status": "done"},
+        ],
+    )
+    _patch_client(monkeypatch, fake)
+    with pytest.raises(village_service.NotOwnerError):
+        village_service.list_covered_notifications(AUTHED, recipient_id=RECIP)
+
+
+def test_covered_notices_non_member_is_blocked(monkeypatch):
+    # A NON-member's membership read returns nothing (RLS), so the owner-gate raises
+    # NotOwnerError and they see no covered notices (they see nothing at all).
+    fake = VillageFakeClient(
+        rpc_scripts={},
+        name_row={"name": "Sam Taylor"},
+        roster_rows=None,  # no membership row for the caller
+        village_need_rows=[],
+    )
+    _patch_client(monkeypatch, fake)
+    with pytest.raises(village_service.NotOwnerError):
+        village_service.list_covered_notifications(AUTHED, recipient_id=RECIP)
+
+
+def test_covered_notices_empty_when_nothing_handled(monkeypatch):
+    # The owner of a recipient with no done needs sees an empty notices list (a calm "nothing
+    # handled yet"), still with the recipient first name + the governed intro.
+    fake = VillageFakeClient(
+        rpc_scripts={},
+        name_row={"name": "Sam Taylor"},
+        roster_rows={"role": "owner"},
+        village_need_rows=[],
+    )
+    _patch_client(monkeypatch, fake)
+    result = village_service.list_covered_notifications(AUTHED, recipient_id=RECIP)
+    assert result.notices == []
+    assert result.recipient_first_name == "Sam"
+    assert "Sam" in result.intro
+
+
+# ===========================================================================
 # ROUTE: the typed errors map to the right HTTP codes
 # ===========================================================================
 
@@ -558,6 +680,55 @@ def test_post_need_happy_path_is_201_with_copy_key(authed, monkeypatch):
     body = r.json()
     assert body["status"] == "open"
     assert body["copy_key"] == "need.posted_confirmation"
+
+
+def test_covered_notifications_happy_path_serializes_notices(authed, monkeypatch):
+    monkeypatch.setattr(
+        village_routes.village_service, "list_covered_notifications",
+        lambda *a, **k: CoveredNoticesResponse(
+            recipient_first_name="Sam",
+            intro="Things Sam's village has taken off your hands. You can let these go.",
+            notices=[
+                {
+                    "need_id": NEED,
+                    "title": "School pickup",
+                    "recipient_first_name": "Sam",
+                    "completed_at": None,
+                    "copy_key": "notification.covered",
+                    "message": "A helper has covered “School pickup” for Sam's village. "
+                    "You can let this one go.",
+                }
+            ],
+        ),
+    )
+    r = authed.get(f"/api/v1/village/notifications?recipient_id={RECIP}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["recipient_first_name"] == "Sam"
+    assert len(body["notices"]) == 1
+    notice = body["notices"][0]
+    assert notice["need_id"] == NEED
+    assert notice["title"] == "School pickup"
+    assert notice["copy_key"] == "notification.covered"
+    # The notice carries NO exact-logistics / contact / helper-identity field (minimum visibility).
+    assert set(notice.keys()) == {
+        "need_id", "title", "recipient_first_name", "completed_at", "copy_key", "message",
+    }
+
+
+def test_covered_notifications_non_owner_is_403_governed_copy(authed, monkeypatch):
+    def boom(*a, **k):
+        raise village_service.NotOwnerError("not the owner of this recipient")
+    monkeypatch.setattr(
+        village_routes.village_service, "list_covered_notifications", boom
+    )
+    r = authed.get(f"/api/v1/village/notifications?recipient_id={RECIP}")
+    assert r.status_code == 403
+    # GOVERNED, guarded copy for the 403, never the raw service text or the role label "owner".
+    detail = r.json()["detail"]
+    assert "not the owner" not in detail
+    assert "owner" not in detail.lower()
+    assert detail == village_routes.render_copy("error.family_only")
 
 
 def test_list_needs_happy_path_serializes_summaries(authed, monkeypatch):

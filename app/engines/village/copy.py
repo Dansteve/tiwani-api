@@ -30,8 +30,15 @@ from typing import Dict, List
 
 from app.engines.village.guard import assert_clean
 
-# The single runtime substitution: the recipient's FIRST name (the Card ceiling).
+# The single runtime substitution for almost every key: the recipient's FIRST name (the
+# Card ceiling).
 NAME_TOKEN = "{name}"
+
+# The one extra substitution, used ONLY by the covered notice (notification.covered): the
+# need's own TITLE (the WHAT the Coordinator typed). It is already INGRESS-guarded at create
+# (Fix A) so it carries no health detail, and the whole village already saw it. covered_notice()
+# substitutes it and guards the assembled line.
+TITLE_TOKEN = "{title}"
 
 
 # The governed copy, by stable copy-key. Grouped by surface. {name} is resolved at render
@@ -92,6 +99,35 @@ COPY: Dict[str, str] = {
     "need.done_action": "Mark as done",
     "need.done_confirmation": (
         "Done, thank you. That is one less thing for the family to hold."
+    ),
+
+    # --- covered / handled: the COORDINATOR-FACING confirmation (the "this is handled, you
+    #     can let it go" relief moment, Village "covered" decision). The done_confirmation
+    #     above is shown to the HELPER who completed the task; these are shown to the
+    #     Coordinator who posted the need, so they LEARN it is covered, not just see a silent
+    #     status flip. Framed as RELIEF + gratitude-adjacent (the village handled it), never a
+    #     task-tracker tone, never an alarm. -------------------------------------------------
+    # The badge word on the owner's board for a need that reached done (a calm "Handled by the
+    # village" token, distinct from the in-progress "Someone has offered" claimed badge).
+    "need.covered_badge": "Handled by the village",
+    # The owner board's warm relief line on a covered (done) need.
+    "need.covered_confirmation": (
+        "{name}'s village handled this. That is one less thing to hold, you can let it go."
+    ),
+    # The /notifications page intro (the calm header above the covered notices).
+    "notification.covered_intro": (
+        "Things {name}'s village has taken off your hands. You can let these go."
+    ),
+    # One covered notice on /notifications. The {title} is the need's own title (the WHAT the
+    # Coordinator typed), which was already guarded at INGRESS (Fix A) so it carries no health
+    # detail, and which the whole village already saw, so showing it back to the Coordinator
+    # leaks nothing. It is the ONLY need-derived text in the notice (no exact location, no
+    # contact, no helper identity: the minimum-visibility rule). The {name} is the recipient's
+    # first name (the Card ceiling). Both tokens are substituted by covered_notice() below,
+    # which guards the assembled line.
+    "notification.covered": (
+        "A helper has covered “{title}” for {name}'s village. "
+        "You can let this one go."
     ),
 
     # --- dropping (the helper steps back; auto re-broadcast) ---------------------------
@@ -196,6 +232,28 @@ def render(key: str, *, name: str = "") -> str:
     return text
 
 
+def covered_notice(*, name: str = "", title: str = "") -> str:
+    """The /notifications covered notice (notification.covered), {name} + {title} resolved.
+
+    The Coordinator-facing "a helper has covered '[title]'" line, built from the governed
+    template with the recipient's first name AND the need's own title substituted. The title
+    was already INGRESS-guarded when the need was posted (Fix A: find_prohibited_words over the
+    free-text fields, so no clinical / health detail can be in it), and the whole village
+    already saw it; substituting it back into the owner's own notice leaks nothing. The
+    assembled line is run through the Hub guard at emit (assert_clean), the backstop. A blank
+    title falls back to a neutral phrase so the sentence still reads.
+    """
+    safe_name = name.strip() or "the family"
+    safe_title = title.strip() or "the help you asked for"
+    text = (
+        COPY["notification.covered"]
+        .replace(NAME_TOKEN, safe_name)
+        .replace(TITLE_TOKEN, safe_title)
+    )
+    assert_clean(text)
+    return text
+
+
 def consent_text(*, name: str = "") -> str:
     """The verbatim per-recipient consent text (stored on record_village_consent).
 
@@ -223,6 +281,13 @@ def all_emitted_strings() -> List[str]:
     """
     strings: List[str] = []
     for key in COPY:
+        if key == "notification.covered":
+            # The covered notice carries a SECOND token ({title}); render the real substituted
+            # form (a representative title + the neutral title) via covered_notice, not render,
+            # so the guard checks what a Coordinator actually reads, not a literal "{title}".
+            strings.append(covered_notice(name="Sam", title="Pick up from swimming"))
+            strings.append(covered_notice(name="", title=""))
+            continue
         strings.append(render(key, name="Sam"))
         strings.append(render(key, name=""))  # the neutral-fallback form
     return strings

@@ -25,6 +25,11 @@ on the claimer-or-owner detail view.
     for any other member; the SECURITY DEFINER detail RPC enforces this server-side).
   - NeedActionResult: the response to claim / confirm / done / drop / cancel: the need id,
     the new status, and the warm governed COPY-KEY the app shows (the copy-key contract).
+  - CoveredNotice / CoveredNoticesResponse: the OWNER-facing "this is handled, you can let
+    it go" confirmation when a need reaches done (the Village "covered" signal). Carries the
+    need title (already village-visible + ingress-guarded) + the recipient first name only,
+    NEVER the helper identity / exact location / contact, plus the governed copy the app
+    renders. Owner-only (the route gates it).
   - RecordConsentRequest / ConsentRecorded: the per-recipient Art. 9 consent gate. The api
     returns the verbatim governed consent text it stored.
   - VillageMember / RosterResponse: the "who is in [name]'s village" roster (the active
@@ -197,6 +202,47 @@ class ConsentRecorded(BaseModel):
 
     recipient_id: str
     consent_text: str
+
+
+class CoveredNotice(BaseModel):
+    """One "this is handled" confirmation for the Coordinator (the Village "covered" signal).
+
+    When a need reaches done (the claimer completed it), the OWNER who posted it learns it is
+    COVERED, the "you can let it go" relief moment, rather than seeing a silent status flip.
+    This is the owner-facing notice the /notifications surface and the owner board render.
+
+    MINIMUM VISIBILITY (the Village ceiling): it carries the need's TITLE (which the whole
+    village already saw and which was INGRESS-guarded at create, Fix A) and the recipient's
+    FIRST name only. It NEVER carries the exact location, the contact, or the helper's identity
+    (the notice says a helper covered it, never WHO; naming the helper would be a contribution
+    signal the no-metric red lines bar). copy_key + message are the GOVERNED copy the app shows
+    VERBATIM (the app authors no notice wording).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    need_id: str
+    title: str
+    recipient_first_name: str
+    completed_at: Optional[datetime] = None
+    copy_key: str
+    message: str
+
+
+class CoveredNoticesResponse(BaseModel):
+    """The Coordinator's covered ("this is handled") notices for one recipient.
+
+    The owner-facing read behind both the /notifications covered notices and the owner board's
+    "recently handled" relief cards: the recipient's first name (for the governed intro) plus
+    the covered notices, newest-completed first, capped. Owner-only (the route gates it): a
+    non-member / non-owner sees nothing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    recipient_first_name: str
+    intro: str
+    notices: List[CoveredNotice]
 
 
 class VillageMember(BaseModel):
