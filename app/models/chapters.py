@@ -23,6 +23,11 @@ from typing import Dict, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Literal
 
+# The wire codes for a SURFACED engagement band (a subset of the EngagementBand enum). Only a
+# once-active chapter that has gone quiet carries a signal: "not_started" and "active" surface
+# nothing (the engagement field is None for them), so the wire only ever sees these two.
+EngagementBandCode = Literal["quiet", "resting"]
+
 
 class Chapter(str, Enum):
     """The six fixed Life Chapters (Product.md section 4.3).
@@ -55,6 +60,30 @@ CHAPTER_DISPLAY_NAMES: Dict[Chapter, str] = {
 }
 
 
+class EngagementView(BaseModel):
+    """The GOVERNED engagement signal for one chapter (the app renders it verbatim).
+
+    Present on ChapterStatus.engagement ONLY when the engagement signal is enabled (the
+    Task-12 OFF-by-default flag) AND the chapter is in a SURFACED band (a once-active chapter
+    that has gone quiet/resting); it is None otherwise, so the contract is unchanged while the
+    signal is gated off. The strings are the api's VERBATIM governed copy (the app authors no
+    wording, exactly as it renders alerts): factual about the plan record, never the carer as
+    the subject of a failure, with no count / streak / trend.
+
+    Fields:
+      band        the surfaced band code ("quiet" or "resting").
+      label       the short status word ("Quiet" / "Resting"); never "Dormant" / "Abandoned".
+      note        the factual one-line statement about the plan record (the chapter is the
+                  subject, never the carer).
+      invitation  the warm forward invitation (a door, never a scold).
+    """
+
+    band: EngagementBandCode
+    label: str
+    note: str
+    invitation: str
+
+
 class ChapterStatus(BaseModel):
     """One chapter's dashboard inputs for the current user (cross-repo contract).
 
@@ -77,11 +106,17 @@ class ChapterStatus(BaseModel):
                         on the wire (the client formats it for display).
       activity_count    how many activities have been prepared in this chapter; 0
                         for a fresh user (the "not started" baseline).
+      engagement        the GOVERNED engagement signal for this chapter (the warm
+                        "Quiet" / "Resting" copy), present ONLY when the Task-12
+                        OFF-by-default engagement flag is on AND the chapter is in a
+                        surfaced band; null otherwise. So while the signal is gated
+                        off (the default) this field is always null and the contract
+                        is unchanged.
 
     For a fresh user, with no activities, LCI, or alerts yet (the state until
     Tasks 5 to 7 land), every chapter is lci=null, alert_level=null,
-    last_prepared_at=null, activity_count=0: the app reads that as grey
-    "not started".
+    last_prepared_at=null, activity_count=0, engagement=null: the app reads that as
+    grey "not started".
     """
 
     # use_enum_values: serialize chapter as its string code ("school"), not the
@@ -94,3 +129,4 @@ class ChapterStatus(BaseModel):
     alert_level: Optional[Literal[1, 2, 3]] = None
     last_prepared_at: Optional[str] = None
     activity_count: int = Field(default=0, ge=0)
+    engagement: Optional[EngagementView] = None

@@ -9,6 +9,8 @@ in a route (routes stay thin: parse, call an engine, serialize). The subpackages
   - pulse      Pulse scheduling and recording    (Product.md section 4.7)
   - cards      the Continuity Card               (Product.md section 4.6)
   - strategies the Strategy Library              (Product.md section 4.10)
+  - checkin    the carer "A moment for you" door (ProductReview.md item 9, gated OFF)
+  - engagement the per-chapter "Quiet"/"Resting" signal (owner-track Task 12, gated OFF)
 
 STATUS: STUBS ONLY. Each subpackage currently holds a docstring that points to
 its authoritative spec section and its module file, and NO logic. They are not

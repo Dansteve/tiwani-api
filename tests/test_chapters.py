@@ -128,9 +128,19 @@ def test_chapters_payload_carries_exactly_the_contract_fields(authed):
         "alert_level",
         "last_prepared_at",
         "activity_count",
+        "engagement",
     }
     for chapter in body:
         assert set(chapter.keys()) == expected_keys
+
+
+def test_chapters_engagement_is_null_for_a_fresh_user(authed):
+    # The engagement signal (the owner's "disengagement" idea) carries NO copy for a chapter
+    # with no plan ever: zero activity is the existing not-started, never quiet/resting. So a
+    # fresh user sees engagement=null on every chapter regardless of the flag.
+    body = authed.get("/api/v1/chapters").json()
+    for chapter in body:
+        assert chapter["engagement"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +182,7 @@ def test_chapter_status_serializes_chapter_as_the_string_code():
         "alert_level": None,
         "last_prepared_at": None,
         "activity_count": 0,
+        "engagement": None,
     }
 
 
@@ -207,3 +218,113 @@ def test_chapter_status_rejects_a_negative_activity_count():
 
     with pytest.raises(ValidationError):
         ChapterStatus(chapter=Chapter.SCHOOL, display_name="School", activity_count=-1)
+
+
+# ---------------------------------------------------------------------------
+# The engagement signal on the chapters service (owner-track Task 12, gated OFF)
+# ---------------------------------------------------------------------------
+#
+# These drive list_chapter_statuses directly with the activity aggregates monkeypatched, so the
+# engagement attachment is verified end-to-end (band -> governed copy -> wire) without coupling
+# to the resolver's row-shape internals. The flag is the gate: OFF (default) attaches nothing.
+
+
+@pytest.fixture
+def stub_chapter_inputs(monkeypatch):
+    """Stub the resolver + the three per-chapter inputs so a test controls the timestamps.
+
+    Returns a setter the test calls with a {chapter_code: (count, last_prepared_at)} map; the
+    LCI and alert reads are stubbed empty (this fixture is about the engagement signal, which
+    is computed from the activity aggregates alone).
+    """
+    from app.services import chapters as chapters_service
+
+    def set_inputs(aggregates):
+        counts = {code: c for code, (c, _) in aggregates.items()}
+        last_prepared = {code: ts for code, (_, ts) in aggregates.items() if ts is not None}
+        monkeypatch.setattr(
+            chapters_service, "resolve_child_id", lambda user, child_id=None: "ch-1"
+        )
+        monkeypatch.setattr(
+            chapters_service,
+            "_activity_aggregates_by_chapter",
+            lambda user, cid: (counts, last_prepared),
+        )
+        monkeypatch.setattr(
+            chapters_service.lci_service, "chapter_scores_by_code", lambda user, cid: {}
+        )
+        monkeypatch.setattr(
+            chapters_service.alerts_service, "active_levels_by_chapter", lambda user, cid: {}
+        )
+
+    return set_inputs
+
+
+def _by_code(statuses):
+    return {s.chapter: s for s in statuses}
+
+
+def _weeks_ago_iso(weeks):
+    # A timestamp `weeks` weeks before the real now (the service bands against the live clock),
+    # so these tests hold whatever day they run on.
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+
+
+def test_engagement_is_omitted_when_the_flag_is_off(stub_chapter_inputs, monkeypatch):
+    # The DEFAULT: the flag is off, so even a long-quiet chapter carries no engagement copy (the
+    # surface is gated on the Task-12 psychiatrist sign-off). A chapter last prepared 20 weeks
+    # ago WOULD be "resting" if the flag were on; with it off, engagement is None.
+    from app.services import chapters as chapters_service
+
+    monkeypatch.delenv("ENGAGEMENT_SIGNAL_ENABLED", raising=False)
+    stub_chapter_inputs({"travel": (3, _weeks_ago_iso(20))})
+    statuses = chapters_service.list_chapter_statuses(AUTHED)
+    for status in statuses:
+        assert status.engagement is None
+
+
+def test_engagement_surfaces_resting_for_a_long_quiet_chapter_when_enabled(
+    stub_chapter_inputs, monkeypatch
+):
+    # Flag ON: a once-active chapter last prepared 20 weeks ago surfaces the governed RESTING
+    # signal (band code, the "Resting" label, a factual note, a warm invitation). The app
+    # renders this verbatim. 20 weeks is well past the 8-week resting threshold.
+    from app.services import chapters as chapters_service
+
+    monkeypatch.setenv("ENGAGEMENT_SIGNAL_ENABLED", "1")
+    stub_chapter_inputs({"travel": (3, _weeks_ago_iso(20))})
+    travel = _by_code(chapters_service.list_chapter_statuses(AUTHED))[Chapter.TRAVEL.value]
+    assert travel.engagement is not None
+    assert travel.engagement.band == "resting"
+    assert travel.engagement.label == "Resting"
+    assert travel.engagement.note  # a factual line about the plan record
+    assert travel.engagement.invitation  # a warm forward door
+
+
+def test_engagement_is_none_for_a_never_started_chapter_even_when_enabled(
+    stub_chapter_inputs, monkeypatch
+):
+    # The was-active-then-quiet guard end-to-end: a chapter with ZERO activity is the existing
+    # not-started, never quiet/resting, even with the flag ON. You cannot abandon what you never
+    # began. (This is the app-visible proof the guard holds through the service + model.)
+    from app.services import chapters as chapters_service
+
+    monkeypatch.setenv("ENGAGEMENT_SIGNAL_ENABLED", "1")
+    stub_chapter_inputs({"travel": (0, None)})
+    travel = _by_code(chapters_service.list_chapter_statuses(AUTHED))[Chapter.TRAVEL.value]
+    assert travel.engagement is None
+
+
+def test_engagement_is_none_for_a_recently_prepared_chapter_when_enabled(
+    stub_chapter_inputs, monkeypatch
+):
+    # A healthy, recently-prepared chapter (within 4 weeks) is ACTIVE, which surfaces no copy:
+    # the signal only ever shows for a chapter that has gone quiet, never for an active one.
+    from app.services import chapters as chapters_service
+
+    monkeypatch.setenv("ENGAGEMENT_SIGNAL_ENABLED", "1")
+    stub_chapter_inputs({"travel": (2, _weeks_ago_iso(1))})  # prepared a week ago: ACTIVE
+    travel = _by_code(chapters_service.list_chapter_statuses(AUTHED))[Chapter.TRAVEL.value]
+    assert travel.engagement is None

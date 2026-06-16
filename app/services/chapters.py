@@ -28,6 +28,15 @@ activities is the not-started baseline (count 0, no timestamp, no LCI, no alert)
 
 The LCI value comes from the SAME fold the LCI dashboard uses (lci_service), so the
 chapter card and the LCI dashboard always agree; this service never does index math.
+
+Engagement signal (the owner's "disengagement" Tier-1 idea, owner-track Task 12; the
+boards' HONEST shape): when the OFF-by-default flag (engagement_engine, ENGAGEMENT_SIGNAL_
+ENABLED) is on, each ChapterStatus also carries a GOVERNED "Quiet" / "Resting" signal,
+computed from the SAME last_prepared_at + activity_count aggregates above (no extra read).
+The band's was-active-then-quiet guard lives in the engine (zero activity is the existing
+not-started, never quiet). While the flag is off (the default) engagement is None on every
+chapter and the contract is unchanged; the surface is gated on the Task-12 psychiatrist
+sign-off, like the "a moment for you" door.
 """
 
 from __future__ import annotations
@@ -37,7 +46,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
-from app.models.chapters import CHAPTER_DISPLAY_NAMES, Chapter, ChapterStatus
+from app.engines import engagement as engagement_engine
+from app.models.chapters import (
+    CHAPTER_DISPLAY_NAMES,
+    Chapter,
+    ChapterStatus,
+    EngagementView,
+)
 from app.services import alerts as alerts_service
 from app.services import lci as lci_service
 from app.services.profile import _rows, resolve_child_id
@@ -66,6 +81,11 @@ def list_chapter_statuses(
     counts, last_prepared = _activity_aggregates_by_chapter(user, resolved_child_id)
     lci_by_chapter = lci_service.chapter_scores_by_code(user, resolved_child_id)
     alert_levels = alerts_service.active_levels_by_chapter(user, resolved_child_id)
+    # The engagement signal (the owner's "disengagement" Tier-1 idea, the boards' HONEST
+    # shape): computed from the SAME activity aggregates above (no extra read), and attached
+    # per chapter ONLY when the Task-12 OFF-by-default flag is on. While it is off (the
+    # default) engagement stays None on every chapter and the contract is unchanged.
+    engagement_on = engagement_engine.is_engagement_signal_enabled()
     return [
         ChapterStatus(
             chapter=chapter,
@@ -74,9 +94,41 @@ def list_chapter_statuses(
             alert_level=alert_levels.get(chapter.value),
             activity_count=counts.get(chapter.value, 0),
             last_prepared_at=last_prepared.get(chapter.value),
+            engagement=(
+                _engagement_for_chapter(
+                    last_prepared.get(chapter.value),
+                    counts.get(chapter.value, 0),
+                )
+                if engagement_on
+                else None
+            ),
         )
         for chapter in Chapter
     ]
+
+
+def _engagement_for_chapter(
+    last_prepared_at: Optional[str], activity_count: int
+) -> Optional[EngagementView]:
+    """The GOVERNED engagement signal for one chapter, or None when nothing is surfaced.
+
+    Computes the deterministic band from the chapter's last-prepared time + lifetime activity
+    count (the was-active-then-quiet guard lives in the engine: zero activity is NOT_STARTED,
+    never quiet), then renders the band's governed copy. Returns None for a band that surfaces
+    no signal (NOT_STARTED / ACTIVE), so the dashboard's grey baseline and the healthy state
+    carry no extra copy. The engine guards every emitted string at render time; this layer
+    just maps the EngagementContent onto the EngagementView wire shape (no app-authored copy).
+    """
+    chapter_band = engagement_engine.band(last_prepared_at, activity_count)
+    content = engagement_engine.render_signal(chapter_band)
+    if content is None:
+        return None
+    return EngagementView(
+        band=content.band.value,
+        label=content.label,
+        note=content.note,
+        invitation=content.invitation,
+    )
 
 
 def _activity_aggregates_by_chapter(
