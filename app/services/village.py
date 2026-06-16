@@ -42,10 +42,13 @@ from postgrest.exceptions import APIError
 from app.auth import AuthedUser
 from app.db import get_anon_client
 from app.engines.village import consent_text as governed_consent_text
+from app.engines.village import covered_notice as governed_covered_notice
 from app.engines.village import find_prohibited_words, result_copy_key
 from app.engines.village import render as render_copy
 from app.models.village import (
     ConsentRecorded,
+    CoveredNotice,
+    CoveredNoticesResponse,
     NeedActionResult,
     NeedDetail,
     NeedStatus,
@@ -58,6 +61,18 @@ from app.services.pagination import MAX_BOUNDED_ROWS, clamp_limit
 
 RECIPIENT_MEMBERSHIP_TABLE = "recipient_membership"
 CHILD_PROFILE_TABLE = "child_profile"
+VILLAGE_NEED_TABLE = "village_need"
+
+# The copy-key for an owner-facing covered notice (the /notifications + owner-board "this is
+# handled" line). It is the GOVERNED covered-notice template; the rendered message substitutes
+# the recipient first name + the need title (covered_notice in the engine).
+COVERED_NOTICE_KEY = "notification.covered"
+
+# Covered notices are BOUNDED (the every-list-is-capped rule): a recipient accumulates done
+# needs over time, so the owner read caps the page. It is a calm relief surface (the most
+# recently handled few), not a full history, so it needs no cursor; the cap is well above any
+# realistic recent-handled count.
+COVERED_NOTICE_LIMIT = 50
 
 # Needs-list pagination (the every-list-is-capped rule, the /cards precedent): the live
 # board accumulates as a Coordinator posts needs, so the list NEVER returns an unbounded
@@ -492,6 +507,90 @@ def get_roster(user: AuthedUser, *, recipient_id: str) -> RosterResponse:
     return RosterResponse(
         recipient_first_name=_recipient_first_name(user, recipient_id),
         members=members,
+    )
+
+
+# ---------------------------------------------------------------------------
+# covered ("this is handled") notices: the COORDINATOR-FACING confirmation
+# ---------------------------------------------------------------------------
+
+
+def list_covered_notifications(
+    user: AuthedUser, *, recipient_id: str
+) -> CoveredNoticesResponse:
+    """The owner's "this is handled, you can let it go" notices for one recipient.
+
+    The Village "covered" signal (the mental-load-lifts moment): when a need reaches done (the
+    claimer completed it) the Coordinator who posted it LEARNS it is covered, rather than seeing
+    a silent status flip. This is the owner-facing read behind both the /notifications covered
+    notices and the owner board's "recently handled" relief cards.
+
+    OWNER-ONLY (a non-owner / non-member sees nothing). It is enforced two ways, defence in
+    depth: first an explicit owner-gate here (the caller must hold an ACTIVE owner
+    recipient_membership row for the recipient, read under their own token; a non-member's
+    membership read returns nothing -> NotOwnerError), then RLS on the read itself (a non-member
+    selects zero village_need rows). The "covered" relief is the Coordinator's, so it stays
+    owner-facing, consistent with the Hub's owner-gating discipline.
+
+    MINIMUM VISIBILITY: it computes the notices from the existing `done` status (no new push
+    channel, no migration), reading the recipient's done village_need rows (RLS-scoped),
+    newest-completed first, capped. Each notice carries the need title (already village-visible +
+    ingress-guarded, Fix A) + the recipient first name only, and the GOVERNED message; it NEVER
+    carries the helper identity, the exact location, or the contact (naming the helper would be a
+    contribution signal the no-metric red lines bar).
+    """
+    _require_owner(user, recipient_id)
+    name = _recipient_first_name(user, recipient_id)
+    client = get_anon_client(user.access_token)
+    rows = _rows(
+        client.table(VILLAGE_NEED_TABLE)
+        .select("id, title, completed_at, status")
+        .eq("recipient_id", recipient_id)
+        .eq("status", NeedStatus.DONE.value)
+        .order("completed_at", desc=True)
+        .limit(COVERED_NOTICE_LIMIT)
+        .execute()
+    )
+    notices = [_covered_notice(row, name=name) for row in rows]
+    return CoveredNoticesResponse(
+        recipient_first_name=name,
+        intro=render_copy("notification.covered_intro", name=name),
+        notices=notices,
+    )
+
+
+def _require_owner(user: AuthedUser, recipient_id: str) -> None:
+    """Raise NotOwnerError unless the caller holds an ACTIVE owner membership on the recipient.
+
+    Reads the caller's own recipient_membership row for the recipient under their token (RLS
+    lets a member read their own membership), and requires role == 'owner' with no revoked_at.
+    A non-member's read returns nothing, so they too get NotOwnerError. This keeps the covered
+    notices owner-facing without a new RPC (the membership table + RLS already exist).
+    """
+    client = get_anon_client(user.access_token)
+    row = _first(
+        client.table(RECIPIENT_MEMBERSHIP_TABLE)
+        .select("role")
+        .eq("recipient_id", recipient_id)
+        .eq("user_id", user.id)
+        .is_("revoked_at", "null")
+        .limit(1)
+        .execute()
+    )
+    if not row or (row.get("role") or "") != "owner":
+        raise NotOwnerError("not the owner of this recipient")
+
+
+def _covered_notice(row: Dict[str, Any], *, name: str) -> CoveredNotice:
+    """Build a CoveredNotice from a done village_need row + the recipient first name."""
+    title = row.get("title", "") or ""
+    return CoveredNotice(
+        need_id=str(row["id"]),
+        title=title,
+        recipient_first_name=name,
+        completed_at=row.get("completed_at"),
+        copy_key=COVERED_NOTICE_KEY,
+        message=governed_covered_notice(name=name, title=title),
     )
 
 

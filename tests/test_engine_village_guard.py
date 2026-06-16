@@ -25,6 +25,7 @@ from app.engines.village import (
     ProhibitedCopyError,
     all_emitted_strings,
     consent_text,
+    covered_notice,
     find_prohibited_words,
     render,
 )
@@ -144,3 +145,41 @@ def test_ingress_rejection_copy_key_is_governed_and_clean():
     text = render("need.content.rejected")
     assert find_prohibited_words(text) == []
     assert "village" in text.lower()
+
+
+def test_covered_confirmation_copy_keys_are_governed_and_clean():
+    # The Village "covered" (this is handled, you can let it go) confirmation copy is the
+    # COORDINATOR-FACING relief signal. Every new key (the board badge, the board relief line,
+    # the /notifications intro) is governed + guard-clean, framed as RELIEF, and carries no
+    # role label / clinical / surveillance word.
+    badge = render("need.covered_badge")
+    conf = render("need.covered_confirmation", name="Sam")
+    intro = render("notification.covered_intro", name="Sam")
+    for text in (badge, conf, intro):
+        assert find_prohibited_words(text) == []
+    # It reads as relief, not a task-tracker: "handled" / "let" appear in the right places.
+    assert "handled" in badge.lower()
+    assert "let it go" in conf.lower()
+
+
+def test_covered_notice_substitutes_title_and_name_and_stays_clean():
+    # The /notifications covered notice carries the need TITLE (the WHAT the Coordinator typed,
+    # already ingress-guarded) + the recipient first name. covered_notice substitutes BOTH and
+    # guards the assembled line. It names the need but NEVER a helper identity (no contribution
+    # signal: the no-metric red lines bar naming who helped).
+    notice = covered_notice(name="Sam", title="Pick Ada up from swimming")
+    assert find_prohibited_words(notice) == []
+    assert "Pick Ada up from swimming" in notice
+    assert "Sam's village" in notice
+    # A blank title / name still renders a clean, readable sentence (the neutral fallback).
+    fallback = covered_notice(name="", title="")
+    assert find_prohibited_words(fallback) == []
+    assert "{title}" not in fallback and "{name}" not in fallback
+
+
+def test_covered_notice_guards_a_title_with_a_prohibited_word():
+    # Defence in depth: even though the need title is ingress-guarded at create, covered_notice
+    # runs assert_clean over the ASSEMBLED line, so a title that somehow carried a prohibited
+    # word (a bug upstream, or a backfilled row) is caught at emit, never shown to the owner.
+    with pytest.raises(ProhibitedCopyError):
+        covered_notice(name="Sam", title="the therapy session")

@@ -27,6 +27,7 @@ from app.engines.village.copy import (
     RESULT_KEY_BY_ACTION,
     all_emitted_strings,
     consent_text,
+    covered_notice,
     render,
     result_copy_key,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "RESULT_KEY_BY_ACTION",
     "all_emitted_strings",
     "consent_text",
+    "covered_notice",
     "render",
     "result_copy_key",
     # guard
