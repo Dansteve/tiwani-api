@@ -1,0 +1,52 @@
+name: Supabase email templates
+
+# Validate the branded auth email templates on every change, and deploy them to
+# the hosted Supabase project when they reach main. The deploy is surgical (it
+# PATCHes only the mailer fields via the Management API) and skips cleanly until
+# the SUPABASE_ACCESS_TOKEN secret is set. See supabase/templates/README.md.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "supabase/templates/**"
+      - "supabase/validate-email-templates.py"
+      - "supabase/deploy-email-templates.sh"
+      - ".github/workflows/supabase-email-templates.yml"
+  pull_request:
+    paths:
+      - "supabase/templates/**"
+      - "supabase/validate-email-templates.py"
+      - "supabase/deploy-email-templates.sh"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Validate templates (brand, variables, non-clinical, AA)
+        run: python supabase/validate-email-templates.py
+
+  deploy:
+    # Only on the default branch or a manual run: push the validated templates to
+    # the hosted project. Never on a pull request.
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy auth email templates to Supabase (mailer fields only)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo "::notice::SUPABASE_ACCESS_TOKEN not set; skipping deploy. Add it under Settings > Secrets and variables > Actions to enable."
+            exit 0
+          fi
+          bash supabase/deploy-email-templates.sh
