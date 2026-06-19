@@ -51,11 +51,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import AuthedUser, get_current_user
 from app.engines.village import render as render_copy
+from app.engines.village.flag import is_card_on_task_enabled
 from app.models.village import (
     ConsentRecorded,
     CoveredNoticesResponse,
     CreateNeedRequest,
     NeedActionResult,
+    NeedCard,
     NeedDetail,
     NeedSummaryPage,
     RecordConsentRequest,
@@ -144,6 +146,11 @@ def post_need(
     is rejected at INGRESS and nothing is stored (Fix A). On success returns the new need
     with status open and the warm 'posted' copy-key.
     """
+    # card-on-task (FeatureDecisions 2026-06-17) is flag-gated: an attach is refused with a calm
+    # 422 until the human DPO + psychiatrist sign-off flips CARD_ON_TASK_ENABLED on, so the
+    # directed card disclosure cannot happen in beta. The need still posts fine without the card.
+    if payload.attach_card and not is_card_on_task_enabled():
+        raise _unprocessable(render_copy("need.card_attach_off"))
     try:
         return village_service.create_need(
             user,
@@ -156,6 +163,7 @@ def post_need(
             contact_phone=payload.contact_phone,
             starts_at=_isoformat(payload.starts_at),
             ends_at=_isoformat(payload.ends_at),
+            attach_card=payload.attach_card,
         )
     except village_service.NeedContentRejectedError as exc:
         # GOVERNED, guarded copy (the INGRESS guard, Fix A): a clinical / health detail typed
@@ -167,6 +175,11 @@ def post_need(
         # GOVERNED, guarded copy (mirrors the sharing / subscription routes): the raw
         # Postgres consent-gate RAISE text never reaches the user, only the warm key.
         raise _conflict(render_copy("need.conflict.consent_required")) from exc
+    except village_service.CardConsentRequiredError as exc:
+        # A card attach with no card-share consent on record (a backstop: the app shows the
+        # governed card-share consent beside the toggle and passes the confirmation, so the RPC
+        # normally records it inline). Prompt the card-share confirmation.
+        raise _conflict(render_copy("need.conflict.card_consent_required")) from exc
     except village_service.NotOwnerError as exc:
         raise _not_allowed(render_copy("error.family_only")) from exc
     except village_service.NotMemberError as exc:
@@ -231,6 +244,37 @@ def get_need(
         raise _not_allowed(render_copy("error.not_in_village")) from exc
     except village_service.NeedNotFoundError as exc:
         raise _not_found(render_copy("error.need_not_found")) from exc
+
+
+@router.get("/village/needs/{need_id}/card", response_model=NeedCard)
+def get_need_card(
+    need_id: str,
+    user: AuthedUser = Depends(get_current_user),
+) -> NeedCard:
+    """The recipient's Continuity Card attached to a need, CLAIMER-ONLY (card-on-task, 0020).
+
+    Flag-gated (CARD_ON_TASK_ENABLED): while OFF the route 404s, so the directed card
+    disclosure cannot happen until the human DPO + psychiatrist sign-off flips it on. When ON,
+    returns the SAFE card (the get_recipient_card_for_member ceiling: first-name-only,
+    non-clinical, with the staleness line) + a governed helper note, but ONLY when the card is
+    attached to THIS need AND the caller is the live claimer of it (or the owner); any other
+    member, a dropped / done / ex-claimer, a revoked member, or a need with no live card gets a
+    404 (the read is GATED, never shown-then-hidden). 403 if not a member of the recipient.
+    """
+    if not is_card_on_task_enabled():
+        raise _not_found(render_copy("need.card.unavailable"))
+    try:
+        card = village_service.get_need_card(user, need_id=need_id)
+    except village_service.NotMemberError as exc:
+        raise _not_allowed(render_copy("error.not_in_village")) from exc
+    except village_service.NeedNotFoundError as exc:
+        raise _not_found(render_copy("error.need_not_found")) from exc
+    if card is None:
+        raise _not_found(render_copy("need.card.unavailable"))
+    return NeedCard(
+        card=card,
+        helper_note=render_copy("need.card_on_task_intro", name=card.child_first_name),
+    )
 
 
 # ---------------------------------------------------------------------------

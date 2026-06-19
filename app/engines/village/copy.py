@@ -54,6 +54,33 @@ COPY: Dict[str, str] = {
         "with."
     ),
 
+    # --- card-on-task: the CARD-SHARE consent + the claimer's view (FeatureDecisions 2026-06-17,
+    #     flag-gated; psychiatrist + DPO refine-and-approve). The owner confirms this BEFORE the
+    #     recipient's Continuity Card is attached to a need; it keys off the CARD-SHARE consent
+    #     (DPO L3, distinct from the village-logistics consent above), capacity-framed, no
+    #     clinical / surveillance / role words.
+    "consent.share_card_on_task": (
+        "I confirm I may share {name}'s support card with the one helper who picks up this "
+        "task, so they know what helps. The card carries no sensitive details, I can stop "
+        "sharing it at any time, and only the helper doing this task can see it."
+    ),
+    # The calm header above the attached card, shown ONLY to the claimer of the need.
+    "need.card_on_task_intro": (
+        "{name}'s family shared this support card so you know what helps. Please keep it to "
+        "yourself and follow the family's lead."
+    ),
+    # The 409 backstop if an attach is asked for with no card-share consent on record and no
+    # confirmation supplied (the app shows the consent line with the toggle, so this is rare).
+    "need.conflict.card_consent_required": (
+        "Before sharing the support card, please confirm you are happy to share it."
+    ),
+    # The 404 line when there is no support card to show for a task (none attached, none live,
+    # or the caller is not the live helper for it).
+    "need.card.unavailable": "There is no support card to show for this task.",
+    # The 422 backstop when an attach is requested while the feature is gated OFF (the app
+    # hides the toggle when off, so this only meets a raw API call).
+    "need.card_attach_off": "Sharing a support card with a task is not available yet.",
+
     # --- posting a need (the Coordinator asks) -----------------------------------------
     "need.post_intro": (
         "Ask {name}'s village for a hand with one specific thing. A clear ask, with a time "
@@ -262,6 +289,19 @@ def consent_text(*, name: str = "") -> str:
     agreed. {name} resolved; guarded.
     """
     return render("consent.share_with_village", name=name)
+
+
+def card_consent_text(*, name: str = "") -> str:
+    """The verbatim CARD-SHARE consent text the owner confirms when attaching the recipient's
+    Continuity Card to a Village task (card-on-task, flag-gated; FeatureDecisions 2026-06-17).
+
+    The card-attach RPC stores this verbatim in share_consent.consent_text when no active
+    card-share consent exists yet, so the record shows precisely what the Coordinator agreed
+    to. Distinct from consent_text() (the village-logistics consent); the DPO's L3 point is
+    that attaching the CARD keys off the CARD-SHARE consent, not the village one. {name}
+    resolved; guarded.
+    """
+    return render("consent.share_card_on_task", name=name)
 
 
 def result_copy_key(action: str) -> str:

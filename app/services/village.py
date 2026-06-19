@@ -41,10 +41,12 @@ from postgrest.exceptions import APIError
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
+from app.engines.village import card_consent_text as governed_card_consent_text
 from app.engines.village import consent_text as governed_consent_text
 from app.engines.village import covered_notice as governed_covered_notice
 from app.engines.village import find_prohibited_words, result_copy_key
 from app.engines.village import render as render_copy
+from app.models.card import CardContent
 from app.models.village import (
     ConsentRecorded,
     CoveredNotice,
@@ -102,11 +104,17 @@ RPC_DROP_NEED = "drop_village_need"
 RPC_CANCEL_NEED = "cancel_village_need"
 RPC_LIST_NEEDS = "list_village_needs"
 RPC_NEED_DETAIL = "get_village_need_detail"
+RPC_NEED_CARD = "get_village_need_card"  # the claimer-only attached-card read (migration 0020)
 
 # The substring of the consent-gate raise (create_village_need raises this exact message
 # with SQLSTATE P0001 when the recipient has no recorded consent), so the service can map
 # it to the distinct ConsentRequiredError rather than a generic conflict.
 _CONSENT_GATE_MARKER = "village consent not recorded"
+
+# The substring of the CARD-SHARE consent-gate raise (create_village_need raises this when an
+# attach is requested with no active card-share consent and no confirmation text supplied), so
+# the service maps it to the distinct CardConsentRequiredError, not a generic conflict.
+_CARD_CONSENT_GATE_MARKER = "card sharing consent not recorded"
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +152,16 @@ class ConsentRequiredError(Exception):
     The Art. 9 gate (refinement 5): the owner must record per-recipient consent before any
     need is posted. The route maps this to 409 with an actionable detail so the app can
     route the Coordinator to the consent step.
+    """
+
+
+class CardConsentRequiredError(Exception):
+    """An attach was asked for with no card-share consent on record (409; card-on-task).
+
+    Distinct from ConsentRequiredError (the village-logistics consent): attaching the
+    Continuity Card keys off the CARD-SHARE consent (DPO L3). The app shows the governed
+    card-share consent line beside the attach toggle and passes the confirmation, so this is
+    a rare backstop; the route maps it to 409 so the app can prompt the card-share confirmation.
     """
 
 
@@ -201,7 +219,10 @@ def _raise_for_api_error(exc: APIError) -> None:
             raise NotOwnerError(message)
         raise NotMemberError(message or "Not allowed")
     if code == "P0001":
-        if _CONSENT_GATE_MARKER in message.lower():
+        lowered = message.lower()
+        if _CARD_CONSENT_GATE_MARKER in lowered:
+            raise CardConsentRequiredError(message)
+        if _CONSENT_GATE_MARKER in lowered:
             raise ConsentRequiredError(message)
         raise NeedConflictError(message or "That action is not available right now")
     if code == "22023":
@@ -250,6 +271,7 @@ def create_need(
     contact_phone: Optional[str],
     starts_at: Optional[str],
     ends_at: Optional[str],
+    attach_card: bool = False,
 ) -> NeedActionResult:
     """Post a need for one recipient (owner-only, consent-gated). Returns the new need.
 
@@ -259,8 +281,22 @@ def create_need(
     NeedContentRejectedError (422) if the typed free text carries a prohibited word (the
     INGRESS guard, Fix A): the need is broadcast to the whole village, so a clinical / health
     detail in any free-text field is REJECTED here, before the RPC, so nothing is stored.
+
+    attach_card (card-on-task, FeatureDecisions 2026-06-17; the route gates it on
+    CARD_ON_TASK_ENABLED): when True the recipient's Continuity Card is attached so the helper
+    who claims this need can see it. It keys off the CARD-SHARE consent (DPO L3): the api
+    supplies the GOVERNED card-share consent text, which the RPC stores verbatim if no active
+    card-share consent exists yet (the owner confirmed it beside the toggle). Raises
+    CardConsentRequiredError (409) only as a backstop (no text + no consent).
     """
     _reject_if_content_unsafe(title, detail, location_text, area_label, contact_name)
+    # The recipient first name is needed up front when attaching (the card-share consent text
+    # is rendered with it) and is reused for the posted confirmation.
+    name = _recipient_first_name(user, recipient_id)
+    # When attaching, supply the GOVERNED card-share consent text (the api authors it, never
+    # the client); the RPC stores it verbatim if no active card-share consent exists. None when
+    # not attaching, so the RPC's card-consent gate is inert for an ordinary post.
+    card_consent = governed_card_consent_text(name=name) if attach_card else None
     need_id = _rpc(
         user,
         RPC_CREATE_NEED,
@@ -274,10 +310,29 @@ def create_need(
             "p_contact_phone": contact_phone,
             "p_starts_at": starts_at,
             "p_ends_at": ends_at,
+            "p_attach_card": attach_card,
+            "p_card_consent_text": card_consent,
         },
     )
-    name = _recipient_first_name(user, recipient_id)
     return _action_result(str(need_id), NeedStatus.OPEN, "posted", name=name)
+
+
+def get_need_card(user: AuthedUser, *, need_id: str) -> Optional[CardContent]:
+    """The CLAIMER-only attached Continuity Card for a need, or None (card-on-task, 0020).
+
+    Calls get_village_need_card (SECURITY DEFINER): it returns the recipient's LIVE safe card
+    (the existing get_recipient_card_for_member ceiling: first-name-only, non-clinical, with
+    the staleness line) ONLY when the card is attached to THIS need AND the caller is the live
+    claimer of it (or the owner), the same occurrence-scoped gate as the per-claim logistics. A
+    non-claimer, a dropped / done / ex-claimer, or a revoked member resolves nothing. Returns
+    None when not allowed / no card attached / no live card (the route maps None -> 404). The
+    card content is never re-implemented here; the RPC reuses the one safe reader, so the
+    ceiling + the card's revoke / expiry are inherited.
+    """
+    data = _rpc(user, RPC_NEED_CARD, {"p_need_id": need_id})
+    if not data:
+        return None
+    return CardContent.model_validate(data)
 
 
 def _reject_if_content_unsafe(*fields: Optional[str]) -> None:

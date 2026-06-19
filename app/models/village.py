@@ -47,6 +47,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.card import CardContent
+
 
 class NeedStatus(str, Enum):
     """The Village need status machine (migration 0017).
@@ -85,6 +87,12 @@ class CreateNeedRequest(BaseModel):
     contact_phone: Optional[str] = Field(default=None, max_length=40)
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+    # OPT-IN, default OFF (card-on-task, FeatureDecisions 2026-06-17; flag-gated): attach the
+    # recipient's Continuity Card so the helper who CLAIMS this need can see what helps. The
+    # route refuses it (422) unless CARD_ON_TASK_ENABLED; the create RPC keys it off the
+    # card-share consent (recorded with the governed text if absent). Never the whole village,
+    # never a new free-text field: a single boolean.
+    attach_card: bool = False
 
 
 class NeedSummary(BaseModel):
@@ -159,6 +167,23 @@ class NeedDetail(BaseModel):
     recipient_first_name: str
     claimed_by_me: bool
     is_claimed: bool
+
+
+class NeedCard(BaseModel):
+    """The attached Continuity Card for a need, served ONLY to the live claimer (card-on-task).
+
+    GET /api/v1/village/needs/{need_id}/card returns this when the card is attached AND the
+    caller is the live claimer (or the owner): the SAFE card content (the
+    get_recipient_card_for_member ceiling, first-name-only, non-clinical, with the staleness
+    line) plus a GOVERNED helper note (the calm "keep it to yourself, follow the family's lead"
+    framing). The route 404s when there is no card to show (none attached / no live claim / no
+    live card), so the body is never empty.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    card: CardContent
+    helper_note: str
 
 
 class NeedActionResult(BaseModel):
