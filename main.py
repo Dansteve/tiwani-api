@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.routes import (
     profile, chapters, plans, pulses, lci, alerts, cards, account,
-    strategies, sharing, village, billing, checkin,
+    strategies, sharing, village, billing, checkin, context,
 )
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -143,6 +143,15 @@ app.include_router(billing.router, prefix="/api/v1", tags=["v1 Subscription & Bi
 # (app/engines/checkin/flag.py): the route 404s until psychiatrist + DPO sign-off enables
 # CHECKIN_MOMENT_ENABLED (Task 12). Registered under /api/v1 behind the current-user dependency.
 app.include_router(checkin.router, prefix="/api/v1", tags=["v1 Check-in Moment"])
+# The display-only Real-World Context Layer (FeatureDecisions.md 2026-06-19, Part B, the
+# calendar slice): public UK calendar dates (bank holidays + England school holidays) the
+# app overlays on the check-in history so a Coordinator can tell a seasonal pause from real
+# narrowing, and judge it themselves. WORLD-FACTS only, governed + guarded (clinical AND
+# editorialising/causal words barred), and it touches NO score (the determinism firewall
+# keeps it out of the LCE/LCI/Alerts). Reads no user data (the calendar is public reference
+# data). GATED OFF by default (app/engines/context/flag.py): the route 404s until the
+# psychiatrist copy sign-off enables CALENDAR_CONTEXT_ENABLED (Task 12). Behind current-user.
+app.include_router(context.router, prefix="/api/v1", tags=["v1 Calendar Context"])
 
 # Health check: the root "/" and "/health" are the same endpoint (Render's health
 # check and any uptime pinger can hit either). Returns 200 with a small status body.
