@@ -25,6 +25,7 @@ from starlette.testclient import TestClient
 import app.routes.alerts as alerts_routes
 import main
 from app.auth import get_current_user
+from app.config import settings
 from app.services import profile as profile_service
 
 # A unique route path used only by the unhandled-exception test. It is added to main.app for
@@ -78,6 +79,37 @@ def test_unhandled_exception_returns_governed_500_with_no_internals(caplog):
     assert any(_SECRET_INTERNAL in record.getMessage() or
                (record.exc_info and _SECRET_INTERNAL in str(record.exc_info[1]))
                for record in caplog.records)
+
+
+def test_unhandled_exception_500_carries_cors_header_for_an_allowed_origin():
+    """A genuine 500 must stay READABLE cross-origin. The catch-all sits OUTSIDE CORSMiddleware, so it
+    echoes an allowed Origin itself; otherwise the browser reports a real 500 (e.g. a transient Supabase
+    outage) as a CORS block instead of the governed 'try again'. A disallowed origin is never echoed."""
+
+    async def _boom() -> None:
+        raise RuntimeError("boom")
+
+    allowed = settings.cors_allow_origins[0]
+    main.app.add_api_route(_BOOM_PATH, _boom, methods=["GET"])
+    try:
+        with TestClient(main.app, raise_server_exceptions=False) as test_client:
+            allowed_resp = test_client.get(_BOOM_PATH, headers={"origin": allowed})
+            denied_resp = test_client.get(_BOOM_PATH, headers={"origin": "https://evil.example"})
+    finally:
+        main.app.router.routes = [
+            route
+            for route in main.app.router.routes
+            if getattr(route, "path", None) != _BOOM_PATH
+        ]
+
+    # The 500 stays readable for an allowed origin (the header echoes that origin, with credentials).
+    assert allowed_resp.status_code == 500
+    assert allowed_resp.headers.get("access-control-allow-origin") == allowed
+    assert allowed_resp.headers.get("access-control-allow-credentials") == "true"
+
+    # A disallowed origin is NEVER echoed (no wildcard-with-credentials leak).
+    assert denied_resp.status_code == 500
+    assert "access-control-allow-origin" not in denied_resp.headers
 
 
 def test_existing_governed_404_is_unaffected(client, monkeypatch):
