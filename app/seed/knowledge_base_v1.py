@@ -215,7 +215,7 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             ),
             ScenarioMoment(
                 id="the_separation",
-                label="The separation itself",
+                label="The goodbye",
                 loads=["TR-END", "SN-UNPRED"],
             ),
             ScenarioMoment(
@@ -481,18 +481,7 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Request written follow-up after meeting",
             "Bring a support person if needed",
         ),
-        moments=[
-            ScenarioMoment(
-                id="the_wait",
-                label="Waiting for the meeting",
-                loads=["TR-WAIT"],
-            ),
-            ScenarioMoment(
-                id="afterwards",
-                label="Winding down afterwards",
-                loads=["RC-MOD"],
-            ),
-        ],
+        # No moments: a Coordinator-facing meeting the child does not attend, so child-present situated strategies do not fit (psych pre-screen F1).
     ),
     ScenarioRow(
         chapter="school",
@@ -509,23 +498,7 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Request independent support if needed; IPSEA, SENDIASS",
             "Allow decompression time after meeting",
         ),
-        moments=[
-            ScenarioMoment(
-                id="getting_there",
-                label="Getting there",
-                loads=["TR-LOC"],
-            ),
-            ScenarioMoment(
-                id="the_wait",
-                label="Waiting for a tense meeting",
-                loads=["TR-WAIT", "SN-UNPRED"],
-            ),
-            ScenarioMoment(
-                id="afterwards",
-                label="Decompression afterwards",
-                loads=["RC-EXT"],
-            ),
-        ],
+        # No moments: a Coordinator-facing conflict/crisis meeting (often without the child); child-present situated copy reads distressingly here (psych pre-screen F1).
     ),
 ]
 
@@ -814,8 +787,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         moments=[
             ScenarioMoment(
                 id="the_disruption",
-                label="When the plan changes suddenly",
-                loads=["TR-CHANGE", "SN-UNPRED"],
+                label="A sudden change of plan",
+                loads=["TR-CHANGE"],
             ),
             ScenarioMoment(
                 id="the_handover",
@@ -912,8 +885,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         moments=[
             ScenarioMoment(
                 id="it_falls_through",
-                label="When care falls through",
-                loads=["TR-CHANGE", "SN-UNPRED"],
+                label="A sudden gap in care",
+                loads=["TR-CHANGE"],
             ),
             ScenarioMoment(
                 id="finding_cover",
@@ -1170,7 +1143,7 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         strategies=_strats(
             "Extend wind-down period",
             "Remove stimulating activities earlier",
-            "Sensory regulation support bath, massage, deep pressure",
+            "Offer calming sensory input if welcomed, for example a warm bath or gentle pressure they like",
             "No screen time 90 minutes before bed",
             "Parent self-regulation, this is the hardest part of the day",
         ),
@@ -1202,21 +1175,12 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/2/3, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Pre-agreed night protocol, what parent does, in what order",
-            "Minimal engagement, keep it dark, calm, and quiet",
-            "Return to bed without prolonged interaction",
-            "Document frequency for healthcare team if persistent",
+            "Comfort and a quick check first, then keep it dark, calm, and quiet",
+            "Return to bed calmly once they are settled, without a long back-and-forth",
+            "If waking is frequent, or they seem in pain or unwell, note it for your GP or health visitor",
         ),
+        # Waking and resettling at night cannot be pre-prepared, and daytime sensory kit does not fit at 3am (doctor pre-screen m1/m2); only the recovery moment carries a situated strategy.
         moments=[
-            ScenarioMoment(
-                id="the_waking",
-                label="Waking in the night",
-                loads=["SN-UNPRED", "TR-SWITCH"],
-            ),
-            ScenarioMoment(
-                id="resettling",
-                label="Trying to resettle",
-                loads=["SN-NOISE", "SN-LIGHT"],
-            ),
             ScenarioMoment(
                 id="back_to_sleep",
                 label="Getting back to sleep",
@@ -1329,7 +1293,7 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         tier=Tier.PIVOT,
         rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/5, total 14, tier Continuity Pivot (transcribed verbatim).",
         strategies=_strats(
-            "Physical separation strategy, identified calm space for each child",
+            "Give each child their own calm space to move to",
             "Reduce sensory load in shared spaces",
             "Pre-agreed conflict de-escalation plan",
             "Parent self-regulation support",
@@ -2645,13 +2609,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
             ),
             ScenarioMoment(
                 id="the_service",
-                label="During the service",
+                label="The service itself",
                 loads=["TR-WAIT", "SN-UNPRED"],
-            ),
-            ScenarioMoment(
-                id="the_feeling_in_the_room",
-                label="The feeling in the room",
-                loads=["SN-UNPRED", "SN-CROWD"],
             ),
             ScenarioMoment(
                 id="quiet_exit",

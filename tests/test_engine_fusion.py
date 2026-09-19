@@ -346,6 +346,34 @@ def test_seed_rejects_duplicate_moment_ids():
         _validate_moments(row)
 
 
+def test_seed_rejects_a_moment_label_with_a_prohibited_clinical_word():
+    # F2/F3: a moment label is user-facing governed copy (it heads the situated group and
+    # is interpolated into each situated sentence), so the load-time guard must catch a
+    # prohibited clinical word in a label, not only in the situated templates.
+    from app.models.seed import ScenarioMoment
+    from app.seed.loader import SeedValidationError, _validate_moments
+
+    row = _moment_row(
+        [ScenarioMoment(id="m", label="Tracking their diagnosis", loads=["SN-NOISE"])]
+    )
+    with pytest.raises(SeedValidationError, match="prohibited clinical words"):
+        _validate_moments(row)
+
+
+def test_situated_copy_guard_would_catch_an_injected_clinical_word(monkeypatch):
+    # F3: prove the situated-copy guard ENFORCES at load, not only that today's copy is
+    # clean (test_situated_and_enrichment_copy_is_non_clinical). Inject a prohibited word
+    # into a template and confirm the seed-load validator raises.
+    from app.seed import situated_templates_v1 as st
+    from app.seed.loader import SeedValidationError, _validate_situated_copy
+
+    monkeypatch.setitem(
+        st.SITUATED_TEMPLATES, "SN-NOISE", {"_default": "This names a diagnosis."}
+    )
+    with pytest.raises(SeedValidationError, match="prohibited clinical words"):
+        _validate_situated_copy()
+
+
 # ---------------------------------------------------------------------------
 # SERVICE: prepare_plan runs the Fusion Layer end to end (the enrichment loop)
 # ---------------------------------------------------------------------------

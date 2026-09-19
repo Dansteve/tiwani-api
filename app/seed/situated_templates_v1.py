@@ -56,7 +56,7 @@ TAG_LABEL: Dict[str, str] = {
     "RC-VAR": "Unpredictable recovery time",
     "CM-NONVERBAL": "Communicating in the moment",
     "CM-AAC": "Managing a communication aid",
-    "CM-ECHO": "Communicating in the moment",
+    "CM-ECHO": "Being understood in the moment",
 }
 
 # The situated-strategy templates: template[tag]["_default" | moment_id] -> a sentence.
@@ -149,9 +149,12 @@ SITUATED_TEMPLATES: Dict[str, Dict[str, str]] = {
         ),
     },
     "TR-CHANGE": {
+        # No {moment} in the body: this template also fires on sudden-disruption
+        # moments (a change already happened), where "keep {moment} predictable" reads
+        # wrong (doctor pre-screen m3). The moment label still heads the group.
         "_default": (
-            "Keep {moment} as predictable as you can and name any change out loud, "
-            "since last-minute changes are a lot for {child}."
+            "When this happens, keep things as predictable as you can and name the "
+            "change out loud, since last-minute changes are a lot for {child}."
         ),
     },
     "RC-MOD": {

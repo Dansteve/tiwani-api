@@ -77,6 +77,11 @@ def _all_seed_strings() -> list[tuple[str, str]]:
         for strategy in scenario.strategies:
             for field, text in _strings_of(strategy):
                 collected.append((f"{where}.strategy[{strategy.rank}].{field}", text))
+        # Moment labels are user-facing governed copy too (they head the situated group
+        # and are interpolated into each situated sentence); _strings_of does not reach
+        # them because moments is a list, so guard them explicitly (psych pre-screen F2).
+        for moment in scenario.moments:
+            collected.append((f"{where}.moment[{moment.id}].label", moment.label))
 
     for modifier in tables.tag_modifiers:
         where = f"tag {modifier.tag_code}/{modifier.dimension.value}"
@@ -117,6 +122,7 @@ def test_the_guarded_surfaces_are_actually_present():
     assert any(loc.endswith(".rationale") and loc.startswith("scenario ") for loc in locations)
     assert any(".strategy[" in loc and loc.endswith(".title") for loc in locations)
     assert any(".strategy[" in loc and loc.endswith(".body") for loc in locations)
+    assert any(".moment[" in loc and loc.endswith(".label") for loc in locations)
     assert any(loc.startswith("tag ") and loc.endswith(".rationale") for loc in locations)
     # The seed is substantial (74 scenarios, 44 tag rows), so the surface is large.
     assert len(locations) > 500

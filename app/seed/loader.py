@@ -319,10 +319,12 @@ def _validate_moments(row: ScenarioRow) -> None:
     """Hard-fail checks for one scenario's moments (LCEEngineAddendum.md section 1).
 
     Moments are optional. When present: each moment id is unique within the scenario
-    (the id is the moment TYPE the situated template keys on), and every loaded tag
-    code is a defined tag in the taxonomy (an unknown code would silently never match
-    an active profile tag). The modifier VALUES stay in the Tag Architecture; loads
-    only name which tags concentrate in the moment.
+    (the id is the moment TYPE the situated template keys on), every loaded tag code is
+    a defined tag in the taxonomy (an unknown code would silently never match an active
+    profile tag), and the moment LABEL clears the non-clinical guard (it is user-facing
+    governed copy: it heads the situated group and is interpolated into every situated
+    sentence, psych pre-screen F2). The modifier VALUES stay in the Tag Architecture;
+    loads only name which tags concentrate in the moment.
     """
     if not row.moments:
         return
@@ -334,6 +336,14 @@ def _validate_moments(row: ScenarioRow) -> None:
                 f"scenario '{row.activity_code}' has duplicate moment id '{moment.id}'"
             )
         seen_ids.add(moment.id)
+        label_hits = find_prohibited_words(moment.label)
+        if label_hits:
+            raise SeedValidationError(
+                f"scenario '{row.activity_code}' moment '{moment.id}' label "
+                f"{moment.label!r} uses prohibited clinical words {label_hits!r}: a "
+                "moment label is user-facing governed copy and must stay non-clinical "
+                "(Product.md section 4.9)."
+            )
         for code in moment.loads:
             if code not in valid_codes:
                 raise SeedValidationError(
