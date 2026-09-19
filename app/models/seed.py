@@ -27,7 +27,7 @@ The four pressure dimensions are the engine's (Product.md section 4.4): temporal
 from __future__ import annotations
 
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -94,6 +94,15 @@ class Tier(str, Enum):
     FULL = "Full"
     ADAPTED = "Adapted"
     PIVOT = "Pivot"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Optional["Tier"]:
+        # Backward-compat for the PRD v2.0 rename (BuildPlan-PRDv2.md): rows stored before the rename
+        # carry the legacy "Modified"; it is now "Adapted". Map it on read so stored plans/cards do not
+        # 500 while migration 0022 (which rewrites the stored values) is unapplied. New writes are "Adapted".
+        if isinstance(value, str) and value == "Modified":
+            return cls.ADAPTED
+        return None
 
 
 def tier_for_total(total: int) -> Tier:
