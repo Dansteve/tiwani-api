@@ -40,6 +40,7 @@ from app.engines.lce import (
     EngineResult,
     build_enrichment,
     compute_specificity,
+    is_fusion_enabled,
     run_engine,
     run_fusion,
 )
@@ -160,10 +161,18 @@ def prepare_plan(
     permanent_tags = list(child.get("tags") or [])
     child_name = str(child.get("name") or "")
 
-    # Enrichment loop (Addendum step 13): the tapped tags become the recipient's
-    # permanent profile tags (the profile builds itself from confirmed choices), then
-    # scoring + fusion + the gate re-run with them below. Persisted under RLS.
-    enriched = bool(enrichment_answer)
+    # The Fusion Layer output (situated strategies, the Specificity Gate, the enrichment
+    # question) is CARE-ADJACENT governed copy, gated on the psychiatrist sign-off via the
+    # FUSION_ENABLED server flag (FusionBuildIssues.md G2/D2, app/engines/lce/flag.py). When
+    # OFF (the default) the plan is exactly pre-fusion: the ranked list is the base
+    # scenario/cross-context strategies, specificity/enrichment/getting_to_know are omitted,
+    # and any enrichment_answer is ignored. The SCORING (scores/total/tier) is never gated.
+    fusion_on = is_fusion_enabled()
+
+    # Enrichment loop (Addendum step 13): the tapped tags become the recipient's permanent
+    # profile tags (the profile builds itself from confirmed choices), then scoring + fusion
+    # + the gate re-run with them below. Persisted under RLS. Ignored while fusion is OFF.
+    enriched = fusion_on and bool(enrichment_answer)
     if enriched:
         permanent_tags = _persist_enrichment_tags(
             user, child_id=child["id"], existing=permanent_tags, added=enrichment_answer
@@ -193,38 +202,47 @@ def prepare_plan(
     )
     base_strategies = _apply_library(result.strategies, library_inputs)
 
-    # THE FUSION LAYER (Addendum steps 9/10): one situated strategy per scenario moment
-    # that an active profile tag loads. Situated strategies surface FIRST (they are the
-    # most specific), then the base scenario + cross-context strategies. All carry provenance.
-    tables = load_seed()
-    moments = tables.get_moments(chapter, activity_code)
-    situated = run_fusion(
-        active_tags=permanent_tags, moments=moments, child_name=child_name
-    )
-    situated_strategies = [
-        PlanStrategy(
-            title=s.moment_label,
-            detail=s.text,
-            source=s.source.value,
-            derived_from=list(s.derived_from),
-            moment=s.moment,
-            moment_label=s.moment_label,
+    if fusion_on:
+        # THE FUSION LAYER (Addendum steps 9/10): one situated strategy per scenario moment
+        # that an active profile tag loads. Situated strategies surface FIRST (the most
+        # specific), then the base scenario + cross-context strategies. All carry provenance.
+        tables = load_seed()
+        moments = tables.get_moments(chapter, activity_code)
+        situated = run_fusion(
+            active_tags=permanent_tags, moments=moments, child_name=child_name
         )
-        for s in situated
-    ]
-    plan_strategies = situated_strategies + base_strategies
+        situated_strategies = [
+            PlanStrategy(
+                title=s.moment_label,
+                detail=s.text,
+                source=s.source.value,
+                derived_from=list(s.derived_from),
+                moment=s.moment,
+                moment_label=s.moment_label,
+            )
+            for s in situated
+        ]
+        plan_strategies = situated_strategies + base_strategies
 
-    # THE SPECIFICITY GATE (Addendum step 11) + enrichment (steps 12/13): compute the gate
-    # over the full provenance list, then decide enrichment vs getting_to_know.
-    specificity = _to_specificity(compute_specificity(plan_strategies))
-    enrichment_view, getting_to_know = _resolve_enrichment(
-        specificity=specificity,
-        already_enriched=enriched,
-        moments=moments,
-        active_tags=permanent_tags,
-        child_name=child_name,
-        seed=tables,
-    )
+        # THE SPECIFICITY GATE (Addendum step 11) + enrichment (steps 12/13): compute the
+        # gate over the full provenance list, then decide enrichment vs getting_to_know.
+        specificity = _to_specificity(compute_specificity(plan_strategies))
+        enrichment_view, getting_to_know = _resolve_enrichment(
+            specificity=specificity,
+            already_enriched=enriched,
+            moments=moments,
+            active_tags=permanent_tags,
+            child_name=child_name,
+            seed=tables,
+        )
+    else:
+        # Fusion gated OFF (FusionBuildIssues.md G2): the pre-fusion plan. The ranked list is
+        # just the base scenario/cross-context strategies (no situated grouping); the gate and
+        # the enrichment question are withheld until the psychiatrist copy sign-off.
+        plan_strategies = base_strategies
+        specificity = None
+        enrichment_view = None
+        getting_to_know = False
 
     scheduled_pulse_at = compute_scheduled_pulse_at(activity_date, now=now)
 
@@ -586,11 +604,24 @@ def _stored_row_to_plan(row: Dict[str, Any]) -> PreparationPlan:
     Reads the STORED values only (no engine run): the final four scores, the total and
     tier, and the stored JSON strategies (each {title, detail, also_worked_in_chapter}).
     dimension_explanations is null (not stored) and used_chapter_average stays at its
-    default (a POST-time flag, not persisted). specificity is RECOMPUTED from the stored
-    strategies' provenance (a pure read of the stored jsonb, no engine run); enrichment /
-    getting_to_know are POST-time (live) states, so they are null / false on a stored read.
+    default (a POST-time flag, not persisted). When the FUSION_ENABLED flag is ON,
+    specificity is RECOMPUTED from the stored strategies' provenance (a pure read of the
+    stored jsonb, no engine run); when it is OFF (the default, the G2 gate) specificity is
+    null and the situated (governed) strategies are dropped, so the stored read is exactly
+    pre-fusion. enrichment / getting_to_know are POST-time (live) states, so they are
+    null / false on a stored read.
     """
     strategies = _strategies_from_stored(row.get("strategies"))
+    if is_fusion_enabled():
+        # Recompute the gate from the stored provenance (a pure read of the jsonb, no run).
+        specificity = _to_specificity(compute_specificity(strategies))
+    else:
+        # Fusion gated OFF (FusionBuildIssues.md G2): drop the situated (care-adjacent,
+        # governed) strategies so the stored read is exactly pre-fusion, and omit the gate.
+        strategies = [
+            s for s in strategies if s.source != StrategySource.SITUATED_FUSION.value
+        ]
+        specificity = None
     return PreparationPlan(
         activity_id=str(row.get("id")),
         chapter=row.get("chapter"),
@@ -607,7 +638,7 @@ def _stored_row_to_plan(row: Dict[str, Any]) -> PreparationPlan:
         strategies=strategies,
         dimension_explanations=None,
         scheduled_pulse_at=_parse_dt(row.get("scheduled_pulse_at")),
-        specificity=_to_specificity(compute_specificity(strategies)),
+        specificity=specificity,
         enrichment=None,
         getting_to_know=False,
     )
@@ -953,7 +984,7 @@ def _to_plan(
     scheduled_pulse_at: datetime,
     plan_strategies: List[PlanStrategy],
     *,
-    specificity: Specificity,
+    specificity: Optional[Specificity],
     enrichment: Optional[Enrichment],
     getting_to_know: bool,
 ) -> PreparationPlan:

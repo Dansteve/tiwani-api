@@ -30,6 +30,7 @@ Pulse completion) is Tasks 6/7.
 """
 
 from app.engines.lce.engine import EngineResult, run_engine
+from app.engines.lce.flag import FUSION_FLAG_ENV, is_fusion_enabled
 from app.engines.lce.fusion import (
     Enrichment,
     FusedStrategy,
@@ -50,4 +51,6 @@ __all__ = [
     "Enrichment",
     "compute_specificity",
     "build_enrichment",
+    "is_fusion_enabled",
+    "FUSION_FLAG_ENV",
 ]
