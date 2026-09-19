@@ -347,6 +347,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Build in 15-minute buffer before departure",
             "Reduce decision points, same breakfast, same route",
         ),
+        moments=[
+            ScenarioMoment(
+                id="getting_going",
+                label="Waking and getting going",
+                loads=["TR-SWITCH", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="getting_ready",
+                label="Getting dressed and breakfast",
+                loads=["SN-TEXTURE", "SN-TASTE"],
+            ),
+            ScenarioMoment(
+                id="out_the_door",
+                label="Heading out the door on time",
+                loads=["TR-LOC", "TR-WAIT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -362,6 +379,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Identify minimum viable morning, what must happen vs what can flex",
             "Sensory regulation support before leaving house",
         ),
+        moments=[
+            ScenarioMoment(
+                id="slow_start",
+                label="A slower, harder start",
+                loads=["TR-SWITCH", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="regulating",
+                label="Helping them settle before leaving",
+                loads=["SN-NOISE", "SN-LIGHT"],
+            ),
+            ScenarioMoment(
+                id="getting_out",
+                label="Getting out the door",
+                loads=["TR-LOC", "TR-WAIT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -377,6 +411,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Reassurance phrase prepared for child",
             "Parent decompression window before starting work",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_journey",
+                label="The trip to school",
+                loads=["TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="the_gate",
+                label="Arriving at the gate",
+                loads=["SN-CROWD", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="saying_goodbye",
+                label="Saying goodbye",
+                loads=["TR-END", "TR-SWITCH"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -392,6 +443,28 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Employer notified of possible late start",
             "Parent self-regulation before entering workplace or calls",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_journey",
+                label="The trip in",
+                loads=["TR-LOC", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="the_gate",
+                label="Arriving at a busy gate",
+                loads=["SN-CROWD", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="saying_goodbye",
+                label="Saying goodbye at the gate",
+                loads=["TR-END", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="settling_after",
+                label="Giving them time to settle",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -438,6 +511,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Decompression activity prepared for child",
             "Work wrap-up protocol, clear end-of-day signal",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_pickup",
+                label="Meeting them at pick-up",
+                loads=["SN-CROWD", "TR-WAIT"],
+            ),
+            ScenarioMoment(
+                id="the_journey_home",
+                label="The journey home",
+                loads=["TR-LOC", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="decompression",
+                label="Winding down after school",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -453,6 +543,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Evening work commitments flagged as at risk",
             "Recovery space planned for child on arrival home",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_pickup",
+                label="Collecting after a hard day",
+                loads=["SN-CROWD", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="the_journey_home",
+                label="The journey home",
+                loads=["TR-LOC", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="recovery_at_home",
+                label="Recovery space at home",
+                loads=["RC-EXT", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -502,6 +609,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Modified participation option, can you dial in rather than attend?",
             "Post-disruption recovery plan for work task",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_disruption",
+                label="When the plan changes suddenly",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="the_handover",
+                label="Handing over to backup care",
+                loads=["TR-SWITCH", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="settling_after",
+                label="Settling the child again afterwards",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -517,6 +641,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Request flexible timing, not Monday morning",
             "Manager briefed on SEND caring context in advance",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_run_up",
+                label="The run-up on the day",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="care_during",
+                label="Care covered while you talk",
+                loads=["TR-LOC", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="refocus_after",
+                label="Getting back into the day after",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -533,6 +674,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Modified participation option, partial attendance?",
             "Recovery time built in for following day",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_run_up",
+                label="Preparing them for the day",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="care_cover",
+                label="Being with the cover carer",
+                loads=["TR-LOC", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="reunion",
+                label="Reconnecting at the end",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -549,6 +707,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Carer's Leave entitlement documented and ready to invoke",
             "Proactive employer communication, early notice always better",
         ),
+        moments=[
+            ScenarioMoment(
+                id="it_falls_through",
+                label="When care falls through",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="finding_cover",
+                label="Sorting backup at short notice",
+                loads=["TR-LOC", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="settling_the_child",
+                label="Settling the child into the change",
+                loads=["TR-SWITCH", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -565,6 +740,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Check-in with manager scheduled",
             "Care infrastructure confirmed stable before return date",
         ),
+        moments=[
+            ScenarioMoment(
+                id="new_routine",
+                label="Settling into the new routine",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="daily_handover",
+                label="The care handover each day",
+                loads=["TR-LOC", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="reconnecting",
+                label="Reconnecting after work",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -580,6 +772,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Prepare Continuity Card for new employer context",
             "Identify caring-friendly employers, NHS, Civil Service, larger employers with DE&I commitments",
         ),
+        moments=[
+            ScenarioMoment(
+                id="interview_cover",
+                label="Care cover for interviews",
+                loads=["TR-LOC", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="a_possible_change",
+                label="Preparing for a change in routine",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="new_rhythm",
+                label="Settling a new rhythm together",
+                loads=["TR-SWITCH", "RC-MOD"],
+            ),
+        ],
     ),
 ]
 
@@ -603,6 +812,28 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "No non-essential decision points",
             "15-minute buffer before departure",
         ),
+        moments=[
+            ScenarioMoment(
+                id="waking_up",
+                label="Waking and getting going",
+                loads=["TR-SWITCH", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="getting_dressed",
+                label="Getting dressed",
+                loads=["SN-TEXTURE", "SN-TOUCH"],
+            ),
+            ScenarioMoment(
+                id="breakfast",
+                label="Breakfast",
+                loads=["SN-TASTE", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="out_the_door",
+                label="Heading out on time",
+                loads=["TR-LOC", "TR-WAIT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -618,6 +849,28 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Sensory regulation support before school",
             "Contact school early if child is not in best shape",
         ),
+        moments=[
+            ScenarioMoment(
+                id="hard_wake",
+                label="A harder wake-up",
+                loads=["TR-SWITCH", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="comfort_breakfast",
+                label="A comfort-led breakfast",
+                loads=["SN-TASTE", "SN-TEXTURE"],
+            ),
+            ScenarioMoment(
+                id="regulating",
+                label="Helping them settle",
+                loads=["SN-NOISE", "SN-LIGHT"],
+            ),
+            ScenarioMoment(
+                id="getting_out",
+                label="Getting out the door",
+                loads=["TR-LOC", "TR-WAIT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -633,6 +886,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Low-demand conversation during meal",
             "Accepted refusal without pressure where safe",
         ),
+        moments=[
+            ScenarioMoment(
+                id="coming_to_table",
+                label="Coming to the table",
+                loads=["TR-SWITCH", "TR-END"],
+            ),
+            ScenarioMoment(
+                id="the_food",
+                label="The food itself",
+                loads=["SN-TASTE", "SN-TEXTURE", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="sitting_through",
+                label="Sitting through the meal",
+                loads=["SN-NOISE", "TR-WAIT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -648,6 +918,28 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Reduced expectation, presence at table is success",
             "Sensory preparation for unfamiliar environment",
         ),
+        moments=[
+            ScenarioMoment(
+                id="getting_there",
+                label="Getting somewhere new",
+                loads=["TR-LOC", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="the_new_food",
+                label="Trying something new",
+                loads=["SN-TASTE", "SN-SMELL", "SN-TEXTURE"],
+            ),
+            ScenarioMoment(
+                id="the_room",
+                label="An unfamiliar, busy room",
+                loads=["SN-NOISE", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="staying_at_table",
+                label="Staying at the table",
+                loads=["TR-WAIT", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -680,6 +972,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "No screen time 90 minutes before bed",
             "Parent self-regulation, this is the hardest part of the day",
         ),
+        moments=[
+            ScenarioMoment(
+                id="ending_the_day",
+                label="Ending the fun of the day",
+                loads=["TR-END", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="long_wind_down",
+                label="A longer wind-down",
+                loads=["SN-NOISE", "SN-LIGHT"],
+            ),
+            ScenarioMoment(
+                id="settling_to_sleep",
+                label="Settling down to sleep",
+                loads=["SN-TOUCH", "SN-TEXTURE"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -695,6 +1004,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Return to bed without prolonged interaction",
             "Document frequency for healthcare team if persistent",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_waking",
+                label="Waking in the night",
+                loads=["SN-UNPRED", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="resettling",
+                label="Trying to resettle",
+                loads=["SN-NOISE", "SN-LIGHT"],
+            ),
+            ScenarioMoment(
+                id="back_to_sleep",
+                label="Getting back to sleep",
+                loads=["RC-VAR", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -710,6 +1036,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Build in quiet time and sensory recovery periods",
             "Reduce social demands on high-regulation-need days",
         ),
+        moments=[
+            ScenarioMoment(
+                id="open_stretches",
+                label="Long open stretches",
+                loads=["SN-UNPRED", "TR-WAIT"],
+            ),
+            ScenarioMoment(
+                id="switching_activities",
+                label="Moving between activities",
+                loads=["TR-SWITCH", "TR-END"],
+            ),
+            ScenarioMoment(
+                id="quiet_time",
+                label="Built-in quiet time",
+                loads=["RC-MOD", "SN-NOISE"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -725,6 +1068,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Familiar morning routine maintained where possible",
             "Lower activity expectations, decompression day",
         ),
+        moments=[
+            ScenarioMoment(
+                id="routine_changes",
+                label="The routine changes",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="open_day",
+                label="A more open day",
+                loads=["SN-UNPRED", "TR-WAIT"],
+            ),
+            ScenarioMoment(
+                id="decompression",
+                label="A decompression day",
+                loads=["RC-MOD", "RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -740,6 +1100,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Activate backup support if available",
             "Reduce all non-essential demands",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_change",
+                label="When the usual routine breaks",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="different_faces",
+                label="Different people helping out",
+                loads=["TR-LOC", "TR-NEW"],
+            ),
+            ScenarioMoment(
+                id="holding_steady",
+                label="Keeping a minimum routine",
+                loads=["TR-SWITCH", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -755,6 +1132,23 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Pre-agreed conflict de-escalation plan",
             "Parent self-regulation support",
         ),
+        moments=[
+            ScenarioMoment(
+                id="as_it_builds",
+                label="As it builds",
+                loads=["SN-NOISE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="separating",
+                label="Moving to separate spaces",
+                loads=["TR-LOC", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="calming_down",
+                label="Calming down after",
+                loads=["RC-MOD", "RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="family",
@@ -770,6 +1164,28 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
             "Child agency over sequence where possible",
             "Alternative hygiene strategies if bath/shower not possible",
         ),
+        moments=[
+            ScenarioMoment(
+                id="getting_started",
+                label="Getting started",
+                loads=["TR-SWITCH", "TR-END"],
+            ),
+            ScenarioMoment(
+                id="the_water",
+                label="Water and washing",
+                loads=["SN-TOUCH", "SN-TEMP"],
+            ),
+            ScenarioMoment(
+                id="products_and_textures",
+                label="Soap, products and textures",
+                loads=["SN-SMELL", "SN-TEXTURE"],
+            ),
+            ScenarioMoment(
+                id="drying_off",
+                label="Drying off and dressing",
+                loads=["SN-TEXTURE", "SN-TOUCH"],
+            ),
+        ],
     ),
 ]
 
