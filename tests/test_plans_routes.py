@@ -331,11 +331,16 @@ def test_prepare_plan_ranks_a_promoted_library_strategy_first(monkeypatch):
         now=NOW,
     )
 
-    # The promoted strategy is now FIRST (it was rank 3 in the seed order).
-    assert plan.strategies[0].title == "Security fast-tracks if available"
-    assert plan.strategies[0].library_item_id == "lib-sec"
+    # The promoted strategy floats to the front of the SCENARIO-BASE strategies (it was
+    # rank 3 in the seed order). Since airport-departure-standard now carries moments, a
+    # recipient tag that loads one (SN-NOISE -> the gate wait) emits a situated-fusion
+    # strategy, and those surface ahead of the base strategies (LCEEngineAddendum), so the
+    # promotion is asserted on the first scenario_base strategy, not plan.strategies[0].
+    base_strategies = [s for s in plan.strategies if s.source == "scenario_base"]
+    assert base_strategies[0].title == "Security fast-tracks if available"
+    assert base_strategies[0].library_item_id == "lib-sec"
     # Every starter strategy carries its library_item_id so the app can remove it.
-    assert plan.strategies[0].library_item_id is not None
+    assert base_strategies[0].library_item_id is not None
     # The numbers are untouched by the library (SL-MED airport-standard, no flags): the library
     # only reordered the strategy list.
     assert plan.scores.temporal == 5 and plan.scores.sensory == 5
