@@ -225,13 +225,17 @@ class PreparationPlan(BaseModel):
     scheduled_pulse_at: datetime
     used_chapter_average: bool = False
     # The Fusion Layer + Specificity Gate + enrichment (LCEEngineAddendum.md 4-6):
-    #   specificity   the gate result (profile_derived, situated, complete).
+    #   specificity   the gate result (profile_derived, situated, complete). NULL when the
+    #                 FUSION_ENABLED server flag is OFF (app/engines/lce/flag.py): the
+    #                 Fusion output is gated on the psychiatrist copy sign-off (G2), so an
+    #                 OFF plan is exactly pre-fusion and omits the gate.
     #   enrichment    the one value-first question, present ONLY when not complete and
-    #                 no enrichment has been tried yet; null otherwise.
+    #                 no enrichment has been tried yet; null otherwise (and always null
+    #                 while the flag is OFF).
     #   getting_to_know  true when the Plan is still not complete AFTER one enrichment:
     #                    the app shows the calm "Still getting to know [child]" state
-    #                    over the best available Plan.
-    specificity: Specificity
+    #                    over the best available Plan (always false while the flag is OFF).
+    specificity: Optional[Specificity] = None
     enrichment: Optional[Enrichment] = None
     getting_to_know: bool = False
 

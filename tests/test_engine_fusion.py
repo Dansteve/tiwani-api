@@ -24,6 +24,7 @@ import app.services.plans as plans_service
 from app.auth import AuthedUser
 from app.engines.alerts.guard import find_prohibited_words
 from app.engines.lce import build_enrichment, compute_specificity, run_fusion
+from app.engines.lce.flag import FUSION_FLAG_ENV
 from app.models.seed import Dimension, StrategySource
 from app.seed import load_seed
 from app.seed.scenario_moments_v1 import (
@@ -352,6 +353,19 @@ def test_seed_rejects_duplicate_moment_ids():
 NOW = datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc)
 AUTHED = AuthedUser(id="u-1", email="ada@example.com", access_token="tok-abc")
 
+
+@pytest.fixture
+def fusion_on(monkeypatch):
+    """Enable the Fusion Layer output (OFF by default, the G2 server gate) for a test.
+
+    The service-level fusion tests assert the fusion fields the plan exposes; those are
+    withheld unless FUSION_ENABLED is truthy, so these tests opt the flag ON (the analogue
+    of the checkin/context flag tests' `enabled` fixture).
+    """
+    monkeypatch.setenv(FUSION_FLAG_ENV, "true")
+    yield
+
+
 # The seeded social birthday party has moments: arrival [SN-CROWD, SN-NOISE, SN-UNPRED],
 # games [SN-UNPRED, TR-SWITCH], food_and_cake [SN-TASTE, SN-SMELL, SN-NOISE], goodbye
 # [TR-END, RC-MOD]. Used for the service-level fusion + gate + enrichment path.
@@ -393,7 +407,7 @@ def _patch_client(monkeypatch, fake):
     monkeypatch.setattr("app.services.plans.get_anon_client", lambda token=None: fake)
 
 
-def test_prepare_plan_complete_when_tags_situate_two_moments(monkeypatch):
+def test_prepare_plan_complete_when_tags_situate_two_moments(monkeypatch, fusion_on):
     # A child whose tags load two distinct moments (SN-CROWD -> arrival, SN-TASTE ->
     # food_and_cake) gets a COMPLETE plan: two situated strategies, gate passes, no
     # enrichment. Situated strategies surface FIRST and carry provenance.
@@ -418,7 +432,7 @@ def test_prepare_plan_complete_when_tags_situate_two_moments(monkeypatch):
     assert any(s.source == "scenario_base" for s in plan.strategies)
 
 
-def test_prepare_plan_incomplete_returns_one_enrichment_question(monkeypatch):
+def test_prepare_plan_incomplete_returns_one_enrichment_question(monkeypatch, fusion_on):
     # A child with NO tags: the gate fails and the plan carries the one value-first
     # enrichment question (highest-loading unconfirmed dimension = sensory), not generic.
     _patch_client(monkeypatch, _fake_client([]))
@@ -438,7 +452,7 @@ def test_prepare_plan_incomplete_returns_one_enrichment_question(monkeypatch):
     assert all(opt.code and opt.label for opt in plan.enrichment.options)
 
 
-def test_prepare_plan_enrichment_answer_persists_tags_and_completes(monkeypatch):
+def test_prepare_plan_enrichment_answer_persists_tags_and_completes(monkeypatch, fusion_on):
     # The enrichment loop: passing enrichment_answer PERSISTS the tags on the recipient
     # (a child_profile update is recorded) and re-runs scoring + fusion + gate in the SAME
     # call; tags spanning two moments make the plan complete.
@@ -465,7 +479,9 @@ def test_prepare_plan_enrichment_answer_persists_tags_and_completes(monkeypatch)
     assert set(tag_updates[0]["payload"]["tags"]) >= {"SN-CROWD", "SN-TASTE"}
 
 
-def test_prepare_plan_enrichment_answer_hitting_one_moment_gets_getting_to_know(monkeypatch):
+def test_prepare_plan_enrichment_answer_hitting_one_moment_gets_getting_to_know(
+    monkeypatch, fusion_on
+):
     # SN-NOISE loads arrival AND food_and_cake for the birthday party, but SN-SMELL loads
     # only food_and_cake. Answering with a single-moment-only set after an enrichment leaves
     # the plan incomplete, so it returns the honest getting_to_know state, no new question.
