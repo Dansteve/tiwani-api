@@ -36,22 +36,38 @@ from typing import Any, Dict, List, Optional, Set
 
 from app.auth import AuthedUser
 from app.db import get_anon_client
-from app.engines.lce import EngineResult, run_engine
+from app.engines.lce import (
+    EngineResult,
+    build_enrichment,
+    compute_specificity,
+    run_engine,
+    run_fusion,
+)
 from app.models.plan import (
     ActivityOption,
     AlsoWorkedIn,
     DimensionExplanations,
     DimensionScores,
+    Enrichment,
+    EnrichmentOption,
     PlanStrategy,
     PlanSummary,
     PlanSummaryPage,
     PreparationPlan,
+    Specificity,
 )
-from app.models.seed import HIGH_DIMENSION_SCORE, Dimension, Tier
+from app.models.seed import HIGH_DIMENSION_SCORE, Dimension, StrategySource, Tier
 from app.seed import load_seed
+from app.seed.situated_templates_v1 import TAG_LABEL, build_enrichment_question
 from app.services import strategies as strategy_library
 from app.services.pagination import clamp_limit
-from app.services.profile import _first, _rows, get_child, get_child_by_id
+from app.services.profile import (
+    _first,
+    _rows,
+    get_child,
+    get_child_by_id,
+    update_child,
+)
 from app.services.timestamps import parse_timestamptz
 
 ACTIVITY_RECORD_TABLE = "activity_record"
@@ -98,21 +114,32 @@ def prepare_plan(
     context_note: Optional[str] = None,
     now: Optional[datetime] = None,
     child_id: Optional[str] = None,
+    enrichment_answer: Optional[List[str]] = None,
 ) -> PreparationPlan:
-    """Run the engine for the user's care recipient, store the record, return the plan.
+    """Run the engine + Fusion Layer for the recipient, store the record, return the plan.
 
-    Steps, in order (section 4.4):
+    Steps, in order (section 4.4 + LCEEngineAddendum.md steps 9 to 13):
       0. fetch the care recipient to plan for (the SL code + permanent tags the engine
          scores from). With child_id given, the plan is prepared for THAT recipient
          (verified owned under RLS); with child_id omitted it is the caller's sole
          recipient (the back-compat default). No recipient (or a child_id the caller
          does not own) => NoCareRecipientError (the route maps to 409).
+      0b. THE ENRICHMENT LOOP (Addendum step 13): if enrichment_answer is given, PERSIST
+         those tags as the recipient's permanent tags (carer-owned, the byproduct-input
+         model) BEFORE scoring, so scoring + fusion + the gate re-run with them in the
+         SAME call.
       1 to 7 + 10. run_engine (pure, seeded rows).
-      9. compute scheduled_pulse_at (activity date + 2h, or 09:00 next day).
-      8. INSERT the activity_record and CONFIRM the write (re-read if the insert
-         returns no representation), so the plan is never returned for an unsaved
-         record.
-      10. shape and return the PreparationPlan.
+      9 to 11. the FUSION LAYER (run_fusion): one situated strategy per scenario moment
+         that has an active loading tag, prepended to the plan (surfaced first); every
+         strategy carries provenance; the SPECIFICITY GATE (compute_specificity) decides
+         if the Plan is complete.
+      12/13. if the gate fails and no enrichment has been tried, attach the one value-first
+         enrichment question; if it still fails AFTER an enrichment, flag getting_to_know.
+      9(clock). compute scheduled_pulse_at (activity date + 2h, or 09:00 next day).
+      8. INSERT/UPDATE the activity_record and CONFIRM the write, so the plan is never
+         returned for an unsaved record.
+      10. shape and return the PreparationPlan (scores/tier from section 4.4, plus
+         specificity / enrichment / getting_to_know from the Addendum).
 
     child_id is the multi-recipient scope (Docs/FeatureDecisions.md, the design note):
     the app sends the ACTIVE recipient's id so a plan is prepared for the recipient
@@ -131,6 +158,16 @@ def prepare_plan(
 
     support_level_code = child.get("support_level_code")
     permanent_tags = list(child.get("tags") or [])
+    child_name = str(child.get("name") or "")
+
+    # Enrichment loop (Addendum step 13): the tapped tags become the recipient's
+    # permanent profile tags (the profile builds itself from confirmed choices), then
+    # scoring + fusion + the gate re-run with them below. Persisted under RLS.
+    enriched = bool(enrichment_answer)
+    if enriched:
+        permanent_tags = _persist_enrichment_tags(
+            user, child_id=child["id"], existing=permanent_tags, added=enrichment_answer
+        )
 
     result = run_engine(
         chapter=chapter,
@@ -154,7 +191,40 @@ def prepare_plan(
         scenario_type=activity_code,
         high_dimensions=high_dimensions,
     )
-    plan_strategies = _apply_library(result.strategies, library_inputs)
+    base_strategies = _apply_library(result.strategies, library_inputs)
+
+    # THE FUSION LAYER (Addendum steps 9/10): one situated strategy per scenario moment
+    # that an active profile tag loads. Situated strategies surface FIRST (they are the
+    # most specific), then the base scenario + cross-context strategies. All carry provenance.
+    tables = load_seed()
+    moments = tables.get_moments(chapter, activity_code)
+    situated = run_fusion(
+        active_tags=permanent_tags, moments=moments, child_name=child_name
+    )
+    situated_strategies = [
+        PlanStrategy(
+            title=s.moment_label,
+            detail=s.text,
+            source=s.source.value,
+            derived_from=list(s.derived_from),
+            moment=s.moment,
+            moment_label=s.moment_label,
+        )
+        for s in situated
+    ]
+    plan_strategies = situated_strategies + base_strategies
+
+    # THE SPECIFICITY GATE (Addendum step 11) + enrichment (steps 12/13): compute the gate
+    # over the full provenance list, then decide enrichment vs getting_to_know.
+    specificity = _to_specificity(compute_specificity(plan_strategies))
+    enrichment_view, getting_to_know = _resolve_enrichment(
+        specificity=specificity,
+        already_enriched=enriched,
+        moments=moments,
+        active_tags=permanent_tags,
+        child_name=child_name,
+        seed=tables,
+    )
 
     scheduled_pulse_at = compute_scheduled_pulse_at(activity_date, now=now)
 
@@ -202,17 +272,115 @@ def prepare_plan(
     # Auto-save (section 4.10): persist each starter strategy as a strategy_library_item for
     # this recipient + scenario, idempotent on a re-plan. Non-interrupting (the plan is already
     # stored), so a library write failure never fails the plan. Runs AFTER the store so the plan
-    # is durable first.
+    # is durable first. Only the BASE scenario strategies are auto-saved; situated strategies are
+    # moment-specific Fusion-Layer output, not library scenario strategies.
     strategy_library.auto_save_plan_strategies(
         user,
         child_id=child["id"],
         chapter=chapter,
         scenario_type=activity_code,
-        strategies=[s.model_dump() for s in plan_strategies],
+        strategies=[s.model_dump() for s in base_strategies],
         high_dimensions=high_dimensions,
     )
 
-    return _to_plan(stored, result, chapter, activity_code, scheduled_pulse_at, plan_strategies)
+    return _to_plan(
+        stored,
+        result,
+        chapter,
+        activity_code,
+        scheduled_pulse_at,
+        plan_strategies,
+        specificity=specificity,
+        enrichment=enrichment_view,
+        getting_to_know=getting_to_know,
+    )
+
+
+_SINGLE_SELECT_PREFIXES = ("CM-", "RC-")
+
+
+def _persist_enrichment_tags(
+    user: AuthedUser,
+    *,
+    child_id: str,
+    existing: List[str],
+    added: Optional[List[str]],
+) -> List[str]:
+    """Merge the enrichment answer into the recipient's permanent tags and persist them.
+
+    The enrichment loop (Addendum step 13): the carer's tapped tags become permanent
+    profile tags (carer-owned). Merges the added codes onto the existing tags, deduped
+    and order-preserving, enforcing the single-select rule (Communication and Recovery
+    keep at most one tag, the newest tapped choice winning), then persists via
+    update_child under RLS. Returns the merged tag list scoring re-runs with. A write
+    that returns nothing (e.g. a fake client) still returns the intended merged list, so
+    scoring re-runs with the enriched profile regardless.
+    """
+    merged: List[str] = list(existing)
+    for code in added or []:
+        if code in merged:
+            continue
+        prefix = next((p for p in _SINGLE_SELECT_PREFIXES if code.startswith(p)), None)
+        if prefix is not None:
+            # Single-select family: drop any existing tag of the same family first.
+            merged = [t for t in merged if not t.startswith(prefix)]
+        merged.append(code)
+    update_child(user, child_id, {"tags": merged})
+    return merged
+
+
+def _to_specificity(engine_spec) -> Specificity:
+    """The engine's Specificity dataclass as the wire Specificity model."""
+    return Specificity(
+        profile_derived=engine_spec.profile_derived,
+        situated=engine_spec.situated,
+        complete=engine_spec.complete,
+    )
+
+
+def _resolve_enrichment(
+    *,
+    specificity: Specificity,
+    already_enriched: bool,
+    moments,
+    active_tags: List[str],
+    child_name: str,
+    seed,
+) -> "tuple[Optional[Enrichment], bool]":
+    """Decide the enrichment question vs the getting_to_know state (Addendum 12/13).
+
+    - complete: no enrichment, not getting_to_know.
+    - not complete AND an enrichment was already tried this call: getting_to_know (show
+      the best available Plan honestly), no question.
+    - not complete AND no enrichment yet: ask ONE value-first question for the
+      highest-loading unconfirmed dimension; if there is no useful question to ask
+      (nothing unconfirmed loads), fall back to getting_to_know.
+    Returns (enrichment | None, getting_to_know).
+    """
+    if specificity.complete:
+        return None, False
+    if already_enriched:
+        return None, True
+
+    engine_enrichment = build_enrichment(
+        moments=moments, active_tags=active_tags, seed=seed
+    )
+    if engine_enrichment is None:
+        return None, True
+
+    dimension = engine_enrichment.dimension.value
+    options = [
+        EnrichmentOption(code=code, label=TAG_LABEL.get(code, code))
+        for code in engine_enrichment.option_codes
+    ]
+    if not options:
+        return None, True
+    view = Enrichment(
+        question=build_enrichment_question(dimension, child_name),
+        dimension=dimension,
+        options=options,
+    )
+    return view, False
 
 
 def compute_scheduled_pulse_at(
@@ -418,8 +586,11 @@ def _stored_row_to_plan(row: Dict[str, Any]) -> PreparationPlan:
     Reads the STORED values only (no engine run): the final four scores, the total and
     tier, and the stored JSON strategies (each {title, detail, also_worked_in_chapter}).
     dimension_explanations is null (not stored) and used_chapter_average stays at its
-    default (a POST-time flag, not persisted).
+    default (a POST-time flag, not persisted). specificity is RECOMPUTED from the stored
+    strategies' provenance (a pure read of the stored jsonb, no engine run); enrichment /
+    getting_to_know are POST-time (live) states, so they are null / false on a stored read.
     """
+    strategies = _strategies_from_stored(row.get("strategies"))
     return PreparationPlan(
         activity_id=str(row.get("id")),
         chapter=row.get("chapter"),
@@ -433,9 +604,12 @@ def _stored_row_to_plan(row: Dict[str, Any]) -> PreparationPlan:
         ),
         total=row.get("total"),
         tier=Tier(row.get("tier")),
-        strategies=_strategies_from_stored(row.get("strategies")),
+        strategies=strategies,
         dimension_explanations=None,
         scheduled_pulse_at=_parse_dt(row.get("scheduled_pulse_at")),
+        specificity=_to_specificity(compute_specificity(strategies)),
+        enrichment=None,
+        getting_to_know=False,
     )
 
 
@@ -457,6 +631,10 @@ def _strategies_from_stored(stored: Any) -> List[PlanStrategy]:
             PlanStrategy(
                 title=item.get("title") or "",
                 detail=item.get("detail") or "",
+                source=item.get("source") or StrategySource.SCENARIO_BASE.value,
+                derived_from=list(item.get("derived_from") or []),
+                moment=item.get("moment"),
+                moment_label=item.get("moment_label"),
                 also_worked_in_chapter=item.get("also_worked_in_chapter"),
             )
         )
@@ -517,10 +695,13 @@ def _apply_library(
     remaining = [s for s in surviving if s.title not in promoted]
     ordered = promoted_first + remaining
 
+    # The scenario's own starter strategies are scenario_base (no profile tag produced
+    # them, so derived_from stays empty): they are not what the Specificity Gate rewards.
     plan_strategies = [
         PlanStrategy(
             title=s.title,
             detail=s.body,
+            source=StrategySource.SCENARIO_BASE.value,
             library_item_id=inputs.item_id_by_title.get(s.title),
             also_worked_in_chapter=s.cross_context_chapter,
         )
@@ -528,13 +709,15 @@ def _apply_library(
     ]
 
     # Append the cross-context strategies, each labelled "Also worked in [chapter]" (section
-    # 4.10). They carry both the richer also_worked_in tag and the scalar source code, plus the
-    # saved item id so the app can dismiss the surfacing per chapter.
+    # 4.10). They are dimension_transfer provenance (surfaced from another chapter where they
+    # worked, not derived from a profile tag, so derived_from stays empty). They carry both the
+    # richer also_worked_in tag and the scalar source code, plus the saved item id.
     for cc in inputs.cross_context:
         plan_strategies.append(
             PlanStrategy(
                 title=cc.title,
                 detail=cc.body,
+                source=StrategySource.DIMENSION_TRANSFER.value,
                 library_item_id=cc.library_item_id,
                 also_worked_in=[
                     AlsoWorkedIn(
@@ -734,17 +917,23 @@ def _store_activity_record(
 
 
 def _strategies_json(plan_strategies: List[PlanStrategy]) -> List[Dict[str, Any]]:
-    """The library-adjusted ranked strategies as the stored JSON array.
+    """The full ranked strategies (situated + base) as the stored JSON array.
 
-    Stores the title, detail, and the single also_worked_in_chapter source code (the
-    activity_record's stored shape, {title, detail, also_worked_in_chapter}); library_item_id
-    and the richer also_worked_in list are LIVE concerns the app re-fetches on the live plan,
-    not persisted (a stored re-read returns the order without the live remove ids).
+    Stores the title, detail, PROVENANCE (source / derived_from / moment / moment_label,
+    LCEEngineAddendum.md section 3), and the single also_worked_in_chapter source code.
+    The provenance is stored in the existing jsonb column (no schema change), so a
+    stored-plan re-read reconstructs the same situated / base ordering AND can recompute
+    the Specificity Gate from the stored provenance. library_item_id and the richer
+    also_worked_in list stay LIVE concerns the app re-fetches on the live plan.
     """
     return [
         {
             "title": s.title,
             "detail": s.detail,
+            "source": s.source,
+            "derived_from": list(s.derived_from),
+            "moment": s.moment,
+            "moment_label": s.moment_label,
             "also_worked_in_chapter": s.also_worked_in_chapter,
         }
         for s in plan_strategies
@@ -763,11 +952,17 @@ def _to_plan(
     activity_code: str,
     scheduled_pulse_at: datetime,
     plan_strategies: List[PlanStrategy],
+    *,
+    specificity: Specificity,
+    enrichment: Optional[Enrichment],
+    getting_to_know: bool,
 ) -> PreparationPlan:
     """Shape the stored row + engine result into the PreparationPlan the app renders.
 
-    plan_strategies is the library-adjusted ranked list (built once in prepare_plan and
-    stored), so the returned plan, the stored JSON, and the auto-save all see the same list.
+    plan_strategies is the full ranked list (situated + base, built once in prepare_plan
+    and stored), so the returned plan, the stored JSON, and the auto-save all see the same
+    list. specificity / enrichment / getting_to_know are the Fusion-Layer + gate outputs
+    (Addendum steps 11 to 13) the app renders alongside the section 4.4 scores.
     """
     return PreparationPlan(
         activity_id=str(stored.get("id")),
@@ -791,4 +986,7 @@ def _to_plan(
         ),
         scheduled_pulse_at=scheduled_pulse_at,
         used_chapter_average=result.used_chapter_average,
+        specificity=specificity,
+        enrichment=enrichment,
+        getting_to_know=getting_to_know,
     )

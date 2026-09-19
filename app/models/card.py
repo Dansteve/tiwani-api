@@ -69,7 +69,7 @@ class CardContent(BaseModel):
       child_first_name  the care recipient's FIRST name only (never the full name).
       activity_name     the activity the helper is supporting.
       chapter           the Life Chapter code (context for the app; not shown raw).
-      tier              the participation tier code (Full / Modified / Pivot).
+      tier              the participation tier code (Full / Adapted / Pivot).
       tier_label        the tier in plain, warm words (what it means for the helper).
       intro             a short supportive intro line.
       strategies        the top strategies, each {title, detail}, for an outsider.

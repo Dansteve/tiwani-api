@@ -43,7 +43,7 @@ CHILD_ROW = {"id": CHILD_ID, "user_id": "u-1", "name": "Sam"}
 
 # A stored activity_record the Pulse reads its chapter + tier + child_id from (the pulse
 # carries its activity's recipient; it does not go through the resolver).
-ACTIVITY_ROW = {"id": "act-1", "chapter": "travel", "tier": "Modified", "child_id": CHILD_ID}
+ACTIVITY_ROW = {"id": "act-1", "chapter": "travel", "tier": "Adapted", "child_id": CHILD_ID}
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ SAMPLE_PULSE = PulseRecord(
     activity_id="act-1",
     outcome_code="well",
     challenge_dimension=None,
-    tier_recommended="Modified",
+    tier_recommended="Adapted",
     chapter="travel",
     timestamp=NOW,
 )
@@ -188,7 +188,7 @@ def _fake_for_pulse_write():
                         {
                             "chapter": "travel",
                             "outcome_code": "well",
-                            "tier_recommended": "Modified",
+                            "tier_recommended": "Adapted",
                             "created_at": "2026-06-20T12:00:00+00:00",
                         }
                     ]
@@ -227,7 +227,7 @@ def test_record_pulse_reads_stored_tier_and_writes_pulse_and_snapshot(monkeypatc
 
     # The record carries the STORED tier + chapter (read from the activity_record),
     # never re-derived.
-    assert record.tier_recommended == "Modified"
+    assert record.tier_recommended == "Adapted"
     assert record.chapter == "travel"
     assert record.outcome_code == "well"
 
@@ -240,11 +240,11 @@ def test_record_pulse_reads_stored_tier_and_writes_pulse_and_snapshot(monkeypatc
     assert payload["activity_id"] == "act-1"
     assert payload["child_id"] == CHILD_ID
     assert payload["chapter"] == "travel"
-    assert payload["tier_recommended"] == "Modified"
+    assert payload["tier_recommended"] == "Adapted"
     assert payload["outcome_code"] == "well"
 
     # The post-pulse recompute wrote an lci_snapshot with the new chapter score
-    # (50 + 7 = 57 for Well on a Modified activity), carrying the same recipient.
+    # (50 + 7 = 57 for Well on a Adapted activity), carrying the same recipient.
     snap_inserts = [c for c in fake.calls if c["op"] == "insert" and c["table"] == "lci_snapshot"]
     assert len(snap_inserts) == 1
     snap = snap_inserts[0]["payload"]
@@ -275,7 +275,7 @@ def test_record_pulse_updates_strategy_library_outcome_counts(monkeypatch):
     activity_row = {
         "id": "act-1",
         "chapter": "travel",
-        "tier": "Modified",
+        "tier": "Adapted",
         "child_id": CHILD_ID,
         "activity_code": "airport-departure-standard",
         "strategies": [{"title": "Lanyard", "detail": "Request the lanyard"}],
@@ -399,7 +399,7 @@ def test_skipped_pulse_records_with_zero_effect_score(monkeypatch):
                         {
                             "chapter": "travel",
                             "outcome_code": "skipped",
-                            "tier_recommended": "Modified",
+                            "tier_recommended": "Adapted",
                             "created_at": "2026-06-20T12:00:00+00:00",
                         }
                     ]
@@ -487,20 +487,20 @@ def test_pending_pulses_are_overdue_activities_without_a_pulse(monkeypatch):
 
 
 def test_chapter_lci_list_folds_scripted_pulses(monkeypatch):
-    # travel: Well/Modified (+7) then Okay/Modified (+5) from 50 -> 62, 2 pulses
+    # travel: Well/Adapted (+7) then Okay/Adapted (+5) from 50 -> 62, 2 pulses
     # (sparse, "building your picture"). family: one Difficult/Full (-8) from 50 ->
     # 42, 1 pulse. Other chapters: no pulse -> score null, "--".
     pulses = [
         {
             "chapter": "travel",
             "outcome_code": "well",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": "2026-06-10T09:00:00+00:00",
         },
         {
             "chapter": "travel",
             "outcome_code": "okay",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": "2026-06-12T09:00:00+00:00",
         },
         {
@@ -565,13 +565,13 @@ def test_overall_lci_excludes_no_data_chapters(monkeypatch):
         {
             "chapter": "travel",
             "outcome_code": "well",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": "2026-06-10T09:00:00+00:00",
         },
         {
             "chapter": "travel",
             "outcome_code": "okay",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": "2026-06-12T09:00:00+00:00",
         },
         {
@@ -644,13 +644,13 @@ def test_overall_lci_is_null_for_an_onboarded_user_with_no_pulses(monkeypatch):
 
 
 def test_chapter_trajectory_uses_the_seven_day_prior_snapshot(monkeypatch):
-    # travel current: Well/Modified x3 from 50 -> 71 (3 pulses, not sparse). A prior
+    # travel current: Well/Adapted x3 from 50 -> 71 (3 pulses, not sparse). A prior
     # snapshot of 60 taken before (NOW - 7 days) -> +11 -> strengthening.
     pulses = [
         {
             "chapter": "travel",
             "outcome_code": "well",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": f"2026-06-1{d}T09:00:00+00:00",
         }
         for d in (4, 5, 6)
@@ -684,13 +684,13 @@ def test_chapter_trajectory_uses_the_seven_day_prior_snapshot(monkeypatch):
 
 def test_chapters_dashboard_now_returns_the_real_lci(monkeypatch):
     # The dashboard reads activity_record (for counts) AND now pulse_record (for the
-    # LCI). travel has one prepared activity and one Well/Modified pulse -> lci 57.
+    # LCI). travel has one prepared activity and one Well/Adapted pulse -> lci 57.
     activity_rows = [{"chapter": "travel", "created_at": "2026-06-11T09:00:00+00:00"}]
     pulse_rows = [
         {
             "chapter": "travel",
             "outcome_code": "well",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": "2026-06-11T09:00:00+00:00",
         }
     ]

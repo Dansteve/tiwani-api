@@ -34,6 +34,7 @@ from app.models.plan import (
     DimensionScores,
     PlanStrategy,
     PreparationPlan,
+    Specificity,
 )
 from app.models.seed import Tier
 from tests.fakes_supabase import FakeClient, FakeResponse
@@ -69,6 +70,7 @@ SAMPLE_PLAN = PreparationPlan(
     ),
     scheduled_pulse_at=NOW,
     used_chapter_average=False,
+    specificity=Specificity(profile_derived=2, situated=1, complete=True),
 )
 
 
@@ -133,6 +135,9 @@ def test_create_plan_success_returns_the_plan_shape(authed, monkeypatch):
         "dimension_explanations",
         "scheduled_pulse_at",
         "used_chapter_average",
+        "specificity",
+        "enrichment",
+        "getting_to_know",
     }
     assert set(body["scores"].keys()) == {"temporal", "sensory", "logistical", "human"}
     assert set(body["dimension_explanations"].keys()) == {
@@ -243,7 +248,7 @@ def test_list_activities_returns_seeded_options(authed):
     assert isinstance(body, list) and len(body) >= 1
     sample = body[0]
     assert set(sample.keys()) == {"activity_code", "activity_name", "tier"}
-    assert sample["tier"] in {"Full", "Modified", "Pivot"}
+    assert sample["tier"] in {"Full", "Adapted", "Pivot"}
     # Every returned activity is a real travel scenario the engine can score.
     codes = {o["activity_code"] for o in body}
     assert "airport-departure-standard" in codes
@@ -357,7 +362,7 @@ def test_prepare_plan_runs_engine_and_writes_record(monkeypatch):
     # The plan is for the stored record (write confirmed, section 4.4 step 8).
     assert plan.activity_id == "act-123"
     assert plan.chapter == "travel"
-    assert plan.tier in {Tier.FULL, Tier.MODIFIED, Tier.PIVOT}
+    assert plan.tier in {Tier.FULL, Tier.ADAPTED, Tier.PIVOT}
 
     # The engine actually ran: airport-standard base is 4/5/5/3, SL-MED x1.2 rounds
     # to 5/6->5/6->5/4 capped at 5 -> 5/5/5/4; SN-NOISE +1 Sensory (already 5);

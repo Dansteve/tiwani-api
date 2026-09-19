@@ -17,7 +17,7 @@ from that chapter matrix: the verbatim scenario name, the four base
 
 TIER SOURCE. Five of the six chapter matrices (School, Family, Social, Travel, Culture)
 carry an explicit Tier column, transcribed verbatim. The Career matrix has NO Tier
-column, so its tier is DERIVED from the total band (4 to 8 Full, 9 to 13 Modified,
+column, so its tier is DERIVED from the total band (4 to 8 Full, 9 to 13 Adapted,
 14 to 20 Pivot), the same banding the LCE applies in step 6. Either way the loader
 hard-fails if a stored tier does not match its total band.
 
@@ -50,7 +50,13 @@ from __future__ import annotations
 
 from typing import List
 
-from app.models.seed import BaseScores, ScenarioRow, ScenarioStrategy, Tier
+from app.models.seed import (
+    BaseScores,
+    ScenarioMoment,
+    ScenarioRow,
+    ScenarioStrategy,
+    Tier,
+)
 from app.seed.strategy_bodies_v1 import STRATEGY_BODIES
 
 # The version label travels with the data (SeedData.md: the seed is versioned).
@@ -88,8 +94,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Morning routine: standard school day",
         base_scores=BaseScores(temporal=3, sensory=2, logistical=3, human=2),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/2, total 10, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/2, total 10, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Visual schedule for morning sequence",
             "Lay out clothes night before",
@@ -120,8 +126,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="School gate drop-off: routine",
         base_scores=BaseScores(temporal=2, sensory=2, logistical=2, human=3),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/2/2/3, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/2/2/3, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Consistent handoff script with school staff",
             "Same drop-off points and routine daily",
@@ -152,8 +158,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="School transport: routine bus or taxi",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=2),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Familiar driver and route",
             "Visual timer for journey length",
@@ -167,14 +173,31 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Playground arrival: open unstructured time",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=2, human=4),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/4, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/4, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Structured arrival activity rather than free play",
             "Named peer or buddy system if available",
             "Sensory reduction strategy, headphones, quiet corner",
             "Staff supervision at arrival",
         ),
+        moments=[
+            ScenarioMoment(
+                id="gate",
+                label="Coming through the gate",
+                loads=["SN-CROWD", "TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="free_play",
+                label="Open, unstructured play",
+                loads=["SN-UNPRED", "SN-NOISE", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="line_up",
+                label="Lining up to go in",
+                loads=["TR-WAIT", "SN-CROWD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -182,8 +205,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Lesson transitions: between classes or spaces",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=3, human=2),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Transition warning 5 and 2 minutes before",
             "Visual schedule showing next activity",
@@ -198,8 +221,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Breaktime and lunchtime",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=2, human=4),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/4, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/4, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Identified quiet space available",
             "Structured activity option during break",
@@ -207,6 +230,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Sensory kit accessible",
             "Named adult available if needed",
         ),
+        moments=[
+            ScenarioMoment(
+                id="dining_hall",
+                label="Dining hall",
+                loads=["SN-NOISE", "SN-CROWD", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="playground",
+                label="Playground break",
+                loads=["SN-UNPRED", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="back_to_class",
+                label="Settling back to class",
+                loads=["TR-SWITCH", "TR-WAIT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -214,8 +254,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Return to school after absence: short",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=3, human=3),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/3, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/3, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Advance communication with school",
             "Gradual reintegration plan if needed",
@@ -260,8 +300,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Parent-school meeting: routine review",
         base_scores=BaseScores(temporal=2, sensory=1, logistical=2, human=4),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/1/2/4, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/1/2/4, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Prepare agenda and questions in advance",
             "Bring evidence of child's experience, LCI data if available",
@@ -275,8 +315,8 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Parent-school meeting: conflict or crisis",
         base_scores=BaseScores(temporal=4, sensory=1, logistical=3, human=5),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/1/3/5, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/1/3/5, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Request meeting in writing, creates a record",
             "Bring written notes and evidence",
@@ -299,8 +339,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         activity_name="Morning routine: standard school day",
         base_scores=BaseScores(temporal=3, sensory=2, logistical=3, human=2),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/2, total 10, tier Modified Participation (derived from the total band).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/2, total 10, tier Adapted (derived from the total band).",
         strategies=_strats(
             "Visual schedule for morning sequence",
             "Lay out clothes night before",
@@ -314,8 +354,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         activity_name="Morning routine: after difficult night",
         base_scores=BaseScores(temporal=4, sensory=3, logistical=3, human=3),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/3/3/3, total 13, tier Modified Participation (derived from the total band).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/3/3/3, total 13, tier Adapted (derived from the total band).",
         strategies=_strats(
             "Activate modified morning plan, reduce expectations",
             "Contact employer/manager early if capacity is reduced",
@@ -367,6 +407,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Flexible working arrangement documented in advance",
             "Employer briefed on SEND caring context via Continuity Card",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_call",
+                label="Taking the call",
+                loads=["TR-CHANGE"],
+            ),
+            ScenarioMoment(
+                id="handover",
+                label="Leaving work to collect",
+                loads=["TR-LOC", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="refocus",
+                label="Getting back to work afterwards",
+                loads=["RC-MOD", "RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -412,6 +469,23 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
             "Reduced meeting load on days child is home",
             "Emergency sensory kit accessible without entering work space",
         ),
+        moments=[
+            ScenarioMoment(
+                id="focused_work",
+                label="Trying to focus or take a meeting",
+                loads=["SN-NOISE", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="lunch_break",
+                label="Lunch and breaks together",
+                loads=["SN-TASTE", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="end_of_day",
+                label="Winding down at the end of the day",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="career",
@@ -435,8 +509,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         activity_name="Performance review or career conversation",
         base_scores=BaseScores(temporal=3, sensory=1, logistical=2, human=4),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/1/2/4, total 10, tier Modified Participation (derived from the total band).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/1/2/4, total 10, tier Adapted (derived from the total band).",
         strategies=_strats(
             "Prepare evidence of contribution despite caring context",
             "Continuity Card summarising employer support needs ready",
@@ -482,8 +556,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         activity_name="Return to work after caring absence",
         base_scores=BaseScores(temporal=4, sensory=2, logistical=3, human=4),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/3/4, total 13, tier Modified Participation (derived from the total band).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/3/4, total 13, tier Adapted (derived from the total band).",
         strategies=_strats(
             "Phased return plan agreed with employer",
             "Updated Continuity Card for employer",
@@ -498,8 +572,8 @@ CAREER_SCENARIOS: List[ScenarioRow] = [
         activity_name="Applying for a new role or promotion",
         base_scores=BaseScores(temporal=3, sensory=1, logistical=3, human=3),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/1/3/3, total 10, tier Modified Participation (derived from the total band).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/1/3/3, total 10, tier Adapted (derived from the total band).",
         strategies=_strats(
             "Document caring responsibilities as context not limitation",
             "Research employer's flexible working policy in advance",
@@ -520,8 +594,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Morning routine: stable day",
         base_scores=BaseScores(temporal=3, sensory=2, logistical=3, human=1),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/1, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/1, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Visual morning schedule",
             "Pre-prepared clothes and bag",
@@ -536,8 +610,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Morning routine: sleep-disrupted night",
         base_scores=BaseScores(temporal=4, sensory=3, logistical=3, human=2),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/3/3/2, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/3/3/2, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Reduced expectation morning, what is the minimum viable exit?",
             "Comfort-led breakfast, familiar, low-demand",
@@ -551,8 +625,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Mealtime: routine meal",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=2, human=2),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/2, total 10, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/2, total 10, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Same foods, same plate, same seating",
             "Remove sensory irritants, smells, textures, sounds",
@@ -597,8 +671,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Bedtime: child resistant or dysregulated",
         base_scores=BaseScores(temporal=4, sensory=3, logistical=3, human=2),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/3/3/2, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/3/3/2, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Extend wind-down period",
             "Remove stimulating activities earlier",
@@ -613,8 +687,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Night waking: child cannot resettle",
         base_scores=BaseScores(temporal=4, sensory=2, logistical=2, human=3),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/2/3, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/2/3, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Pre-agreed night protocol, what parent does, in what order",
             "Minimal engagement, keep it dark, calm, and quiet",
@@ -628,8 +702,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Weekend: unstructured day",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=3, human=2),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Create loose structure, not rigid, but predictable rhythm",
             "Identify anchor activities that ground the day",
@@ -643,8 +717,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Holiday from school: first day",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=3, human=2),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Prepare child in advance for change of routine",
             "Visual schedule for holiday day",
@@ -658,8 +732,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Routine disruption: family illness or absence",
         base_scores=BaseScores(temporal=4, sensory=2, logistical=4, human=3),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/4/3, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/2/4/3, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Identify minimum viable routine for disrupted day",
             "Communicate change to child visually and early",
@@ -688,8 +762,8 @@ FAMILY_SCENARIOS: List[ScenarioRow] = [
         activity_name="Hygiene routine: bath or shower resistance",
         base_scores=BaseScores(temporal=3, sensory=5, logistical=2, human=2),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/5/2/2, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/5/2/2, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Sensory-adapted approach, water temperature, pressure, products",
             "Visual schedule for hygiene sequence",
@@ -726,8 +800,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Playdate: unfamiliar child or new location",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=2, human=4),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/4, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/4, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Pre-visit to location if possible",
             "Shorter duration than usual",
@@ -742,8 +816,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Birthday party: small, familiar children",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=2, human=4),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/4, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/4, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Arrive early before crowd builds",
             "Identify quiet space in advance",
@@ -751,6 +825,28 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Exit plan agreed: we may need to leave early'",
             "Familiar food option confirmed",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arrival",
+                label="Arrival",
+                loads=["SN-CROWD", "SN-NOISE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="games",
+                label="Games and activities",
+                loads=["SN-UNPRED", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="food_and_cake",
+                label="Food and cake",
+                loads=["SN-TASTE", "SN-SMELL", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="goodbye",
+                label="Leaving and wind-down",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -775,8 +871,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Family gathering, small familiar group",
         base_scores=BaseScores(temporal=2, sensory=2, logistical=2, human=3),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/2/2/3, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/2/2/3, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Familiar setting where possible",
             "Child's safe foods available",
@@ -807,8 +903,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Community event, small local",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=3),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/3, total 10, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/3, total 10, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Preview event in advance if possible",
             "Attend off-peak if timing flexible",
@@ -839,14 +935,31 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Eating out: familiar restaurant",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=2),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Familiar restaurant, same place, same table if possible",
             "Menu reviewed in advance",
             "Off-peak timing",
             "Sensory adjustments, quieter area requested",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arrival_seating",
+                label="Arriving and being seated",
+                loads=["SN-CROWD", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="waiting_for_food",
+                label="Waiting for food",
+                loads=["TR-WAIT", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="the_meal",
+                label="The meal itself",
+                loads=["SN-TASTE", "SN-TEXTURE"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -854,8 +967,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Eating out: new restaurant or occasion",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=3, human=3),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/3, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/3, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Menu reviewed online in advance",
             "Call ahead, explain needs, request quiet table",
@@ -870,8 +983,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Public transport, routine journey",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=2),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Same route and timing",
             "Sensory kit, headphones, comfort item",
@@ -885,8 +998,8 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Public transport, unfamiliar route or busy",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=3, human=2),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/2, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/2, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Practise route in advance",
             "Avoid peak times",
@@ -923,8 +1036,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Car journey, long, over 2 hours",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=3, human=1),
         stated_total=10,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/1, total 10, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/1, total 10, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Pre-planned stop schedule, same stops every time",
             "Sensory kit in back seat",
@@ -940,8 +1053,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Train journey, short, familiar",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=2),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Seat reservation, same carriage type",
             "Quiet coach if available",
@@ -955,8 +1068,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Train journey, long or unfamiliar",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=3, human=2),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/2, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/2, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Reserve specific seats in advance",
             "Quiet carriage reserved",
@@ -1007,8 +1120,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Flight, short haul under 3 hours",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=3, human=2),
         stated_total=12,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/2, total 12, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/3/2, total 12, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Seat selection, window for view or aisle for exit",
             "Sensory kit in hand luggage",
@@ -1042,8 +1155,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Hotel stay, familiar hotel or chain",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=2),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Same hotel chain or room type where possible",
             "Request quiet room away from lifts and street",
@@ -1057,8 +1170,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Hotel stay, unfamiliar or holiday let",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=3, human=2),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/3/2, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Photos of accommodation reviewed before arrival",
             "Bring familiar bedding, towels, food items",
@@ -1073,8 +1186,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Holiday day, structured activity",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=2),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/2, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Activity reviewed in advance",
             "Sensory kit packed",
@@ -1106,8 +1219,8 @@ TRAVEL_SCENARIOS: List[ScenarioRow] = [
         activity_name="Return home from holiday",
         base_scores=BaseScores(temporal=3, sensory=2, logistical=3, human=1),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/1, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/2/3/1, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Prepare child for return in advance",
             "Familiar home routine reinstated immediately",
@@ -1128,8 +1241,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
         activity_name="Weekly religious service, familiar, smaller congregation",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=2, human=3),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/3, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/2/3, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Same seat, same position every week",
             "Quiet space identified, vestibule, side room, car",
@@ -1144,8 +1257,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
         activity_name="Weekly religious service, large or high sensory",
         base_scores=BaseScores(temporal=4, sensory=4, logistical=2, human=3),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/4/2/3, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 4/4/2/3, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Arrive after music starts if music is high-pressure",
             "Sit near exit",
@@ -1177,8 +1290,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
         activity_name="Cultural celebration, family-led at home",
         base_scores=BaseScores(temporal=2, sensory=3, logistical=2, human=4),
         stated_total=11,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/4, total 11, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/3/2/4, total 11, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Child's safe foods available",
             "Quiet space in home identified",
@@ -1209,8 +1322,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
         activity_name="Faith community group or class, children's group",
         base_scores=BaseScores(temporal=2, sensory=2, logistical=2, human=3),
         stated_total=9,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/2/2/3, total 9, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 2/2/2/3, total 9, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Familiar adults in group",
             "Structured activity, predictable format each week",
@@ -1258,8 +1371,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
         activity_name="Cultural or faith trip: pilgrimage, heritage site visit",
         base_scores=BaseScores(temporal=3, sensory=3, logistical=4, human=3),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/4/3, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/3/4/3, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Preview destination visually",
             "Sensory kit packed",
@@ -1274,8 +1387,8 @@ CULTURE_SCENARIOS: List[ScenarioRow] = [
         activity_name="Community fundraiser or social event",
         base_scores=BaseScores(temporal=3, sensory=4, logistical=2, human=4),
         stated_total=13,
-        tier=Tier.MODIFIED,
-        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/4, total 13, tier Modified Participation (transcribed verbatim).",
+        tier=Tier.ADAPTED,
+        rationale="Authoritative base scores temporal/sensory/logistical/human = 3/4/2/4, total 13, tier Adapted (transcribed verbatim).",
         strategies=_strats(
             "Preview format and venue",
             "Arrive at quieter time",

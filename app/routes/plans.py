@@ -77,6 +77,7 @@ def create_plan(
     """
     _validate_chapter(payload.chapter)
     today_flags = _today_flag_codes(payload.today_flags)
+    enrichment_answer = _enrichment_tag_codes(payload.enrichment_answer)
 
     try:
         return plans_service.prepare_plan(
@@ -87,6 +88,7 @@ def create_plan(
             activity_date=payload.date,
             context_note=payload.context_note,
             child_id=child_id,
+            enrichment_answer=enrichment_answer,
         )
     except plans_service.NoCareRecipientError as exc:
         raise HTTPException(
@@ -199,5 +201,22 @@ def _today_flag_codes(today_flags: List[Tag]) -> List[str]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"today_flags must be TG- codes; got {bad}",
+        )
+    return codes
+
+
+def _enrichment_tag_codes(enrichment_answer: List[Tag]) -> List[str]:
+    """Coerce the enrichment answer to PERMANENT tag code strings, rejecting TG- flags.
+
+    The enrichment loop (LCEEngineAddendum.md section 5) adds PERMANENT profile tags
+    (SN-/TR-/CM-/RC-) the carer tapped; a TG- day flag is not a permanent tag and is a
+    422 here. The service persists these on the recipient and re-runs the plan.
+    """
+    codes = [t.value for t in enrichment_answer]
+    bad = [c for c in codes if c.startswith(_TODAY_FLAG_PREFIX)]
+    if bad:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"enrichment_answer must be permanent profile tags, not TG- flags; got {bad}",
         )
     return codes

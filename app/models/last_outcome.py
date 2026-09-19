@@ -50,7 +50,7 @@ class LastOutcome(BaseModel):
                           skipped: a skipped pulse is not an outcome to recall, so the read
                           finds the most recent NON-skipped pulse (and returns null if every
                           pulse in the chapter was skipped).
-      tier_recommended    the participation tier that plan used (Full / Modified / Pivot),
+      tier_recommended    the participation tier that plan used (Full / Adapted / Pivot),
                           the stored value the pulse copied (never re-derived). Lets the app
                           state "the Continuity Pivot worked here" only when grounded.
       challenge_dimension the biggest-pressure dimension the Coordinator named on that pulse

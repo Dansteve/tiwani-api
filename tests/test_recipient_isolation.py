@@ -107,7 +107,7 @@ def _pulse(child_id: str, chapter: str, outcome: str, tier: str, day: int) -> Di
 
 
 # A two-recipient world, same chapter (travel), deliberately divergent so a mix is visible:
-#   - Sam (CHILD_A): two Well/Modified pulses -> 50 +7 +5 = 62.
+#   - Sam (CHILD_A): two Well/Adapted pulses -> 50 +7 +5 = 62.
 #   - Ade (CHILD_B): one Difficult/Full pulse -> 50 -8 = 42.
 # If any fold pooled the two, travel would be neither 62 nor 42 (it would fold all three),
 # so the distinct 62 / 42 assertions are the isolation proof.
@@ -117,14 +117,14 @@ TABLES = {
         {"id": CHILD_B, "user_id": "u-1", "name": "Ade"},
     ],
     "pulse_record": [
-        _pulse(CHILD_A, "travel", "well", "Modified", 10),
-        _pulse(CHILD_A, "travel", "okay", "Modified", 12),
+        _pulse(CHILD_A, "travel", "well", "Adapted", 10),
+        _pulse(CHILD_A, "travel", "okay", "Adapted", 12),
         _pulse(CHILD_B, "travel", "difficult", "Full", 11),
     ],
     "lci_snapshot": [],
     "activity_record": [
         {"user_id": "u-1", "child_id": CHILD_A, "chapter": "travel",
-         "tier": "Modified", "created_at": "2026-06-10T09:00:00+00:00"},
+         "tier": "Adapted", "created_at": "2026-06-10T09:00:00+00:00"},
         {"user_id": "u-1", "child_id": CHILD_B, "chapter": "travel",
          "tier": "Full", "created_at": "2026-06-11T09:00:00+00:00"},
     ],

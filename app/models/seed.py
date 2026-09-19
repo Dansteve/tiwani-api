@@ -44,10 +44,10 @@ MIN_TOTAL = 4  # four dimensions at the 1 floor
 MAX_TOTAL = 20  # four dimensions at the 5 ceiling
 
 # The tier band boundaries (Product.md section 4.4 step 6): 4 to 8 Full, 9 to 13
-# Modified, 14 to 20 Pivot. The upper edge of each lower band; the top band runs to
+# Adapted, 14 to 20 Pivot. The upper edge of each lower band; the top band runs to
 # MAX_TOTAL. Used by tier_for_total() to derive and validate every scenario's tier.
 MAX_TOTAL_FULL = 8
-MAX_TOTAL_MODIFIED = 13
+MAX_TOTAL_ADAPTED = 13
 
 # The dimension-match threshold (Product.md section 4.4 step 7): the LCE surfaces
 # strategies matched to "high-scoring dimensions (>= 3)". A final dimension score at
@@ -56,6 +56,15 @@ MAX_TOTAL_MODIFIED = 13
 # engine reads it as a named bound and never inlines the literal (the SeedData.md
 # hard rule; a pytest guard rejects a numeric literal >= 2 in the LCE source).
 HIGH_DIMENSION_SCORE = 3
+
+# The Specificity Gate thresholds (LCEEngineAddendum.md section 4, AUTHORITATIVE): a
+# Plan may present as COMPLETE only if it carries at least GATE_MIN_PROFILE_DERIVED
+# profile-derived strategies (derived_from != []) AND at least GATE_MIN_SITUATED
+# situated strategies (source == situated_fusion). Named here (the bounds layer) so
+# the pure Fusion Layer (app/engines/lce/fusion.py) reads them as named bounds and
+# never inlines a numeric literal (the SeedData.md hard rule + the LCE no-score guard).
+GATE_MIN_PROFILE_DERIVED = 2
+GATE_MIN_SITUATED = 1
 
 
 class Dimension(str, Enum):
@@ -68,19 +77,22 @@ class Dimension(str, Enum):
 
 
 class Tier(str, Enum):
-    """The participation tier (Product.md section 4.4 step 6, the source's banding).
+    """The participation tier / route (Product.md section 4.4 step 6, the banding).
 
-    The total-score band fixes the tier: 4 to 8 Full Engagement, 9 to 13 Modified
-    Participation, 14 to 20 Continuity Pivot. The Knowledge Base prints a Tier on
-    every scenario (five of the six matrices carry an explicit Tier column; the
-    Career matrix omits it and the tier is derived from the band). Stored on the
-    scenario so the transcription is faithful and checkable; the engine recomputes
-    the tier in step 6 and the loader hard-fails if a stored tier disagrees with
-    its total band.
+    The total-score band fixes the tier: 4 to 8 Full, 9 to 13 Adapted, 14 to 20
+    Pivot (the three routes, Product2.md / Canonical Glossary v1.0: Green -> Full,
+    Amber -> Adapted, Red -> Pivot). The middle route's canonical name is "Adapted"
+    (it was "Modified Participation" in the pre-v2 build; the value was renamed as
+    part of the PRD v2.0 / LCE Addendum reconciliation, BuildPlan-PRDv2.md). The
+    Knowledge Base prints a Tier on every scenario (five of the six matrices carry
+    an explicit Tier column; the Career matrix omits it and the tier is derived from
+    the band). Stored on the scenario so the transcription is faithful and checkable;
+    the engine recomputes the tier in step 6 and the loader hard-fails if a stored
+    tier disagrees with its total band.
     """
 
     FULL = "Full"
-    MODIFIED = "Modified"
+    ADAPTED = "Adapted"
     PIVOT = "Pivot"
 
 
@@ -92,9 +104,28 @@ def tier_for_total(total: int) -> Tier:
     """
     if total <= MAX_TOTAL_FULL:
         return Tier.FULL
-    if total <= MAX_TOTAL_MODIFIED:
-        return Tier.MODIFIED
+    if total <= MAX_TOTAL_ADAPTED:
+        return Tier.ADAPTED
     return Tier.PIVOT
+
+
+class StrategySource(str, Enum):
+    """Where a plan strategy came from (LCEEngineAddendum.md section 3, provenance).
+
+    Every strategy in a Plan carries its provenance so the Specificity Gate can tell
+    a genuinely personalised Plan from generic scenario content:
+      - SCENARIO_BASE: a seeded starter strategy for the scenario (derived_from is
+        empty; it is not tied to any profile tag).
+      - DIMENSION_TRANSFER: a cross-context strategy surfaced from another chapter
+        where it worked (section 4.10 "Also worked in [chapter]"); derived_from is
+        empty (it is chapter-derived, not tag-derived).
+      - SITUATED_FUSION: a Fusion-Layer strategy tying an active profile tag to a
+        specific scenario moment (derived_from names the active tag(s); moment is set).
+    """
+
+    SCENARIO_BASE = "scenario_base"
+    DIMENSION_TRANSFER = "dimension_transfer"
+    SITUATED_FUSION = "situated_fusion"
 
 
 class BaseScores(BaseModel):
@@ -143,6 +174,28 @@ class ScenarioStrategy(BaseModel):
     body: str = Field(..., min_length=1)
 
 
+class ScenarioMoment(BaseModel):
+    """One sub-moment of a scenario where pressure concentrates (LCEEngineAddendum.md 1).
+
+    A moment is a short, ordered sub-part of a scenario (e.g. "Arrival / playground",
+    "First assembly") that the Fusion Layer situates a strategy to. It has:
+      - id: a stable, scenario-local identifier (e.g. "arrival"), also the moment
+        TYPE the situated-strategy template is keyed on (template[tag][moment.id]);
+      - label: the user-readable moment name the plan shows;
+      - loads: the tag codes whose pressure concentrates in this moment. When an
+        active profile tag is in loads, the moment produces one situated strategy.
+    loads are validated against the Tag taxonomy on seed load (loader.py); the
+    modifier VALUES stay in the Tag Architecture, this only names which tags load
+    the moment.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+    loads: List[str] = Field(..., min_length=1)
+
+
 class ScenarioRow(BaseModel):
     """One scenario in the matrix: a (chapter, activity) with scores + strategies.
 
@@ -168,6 +221,12 @@ class ScenarioRow(BaseModel):
     tier: Tier
     rationale: str = Field(..., min_length=1)
     strategies: List[ScenarioStrategy] = Field(..., min_length=1)
+    # The scenario's ordered sub-moments the Fusion Layer situates strategies to
+    # (LCEEngineAddendum.md section 1). Empty by default: moments are additive
+    # authored metadata rolling out per scenario (BuildPlan-PRDv2.md, Wave 1 seeds a
+    # handful, Wave 2 completes all 74), so a scenario with no moments authored yet
+    # simply produces no situated strategies. Their loads are validated on load.
+    moments: List[ScenarioMoment] = Field(default_factory=list)
 
     @field_validator("strategies")
     @classmethod
@@ -195,7 +254,7 @@ class ScenarioRow(BaseModel):
           - the four base cells sum to the Total PRINTED in the source matrix
             (stated_total); a mismatch means a cell was mistyped on transcription;
           - the stored tier matches the total's band (section 4.4 step 6: 4 to 8
-            Full, 9 to 13 Modified, 14 to 20 Pivot). For the Career matrix the tier
+            Full, 9 to 13 Adapted, 14 to 20 Pivot). For the Career matrix the tier
             is derived from the band; for the others it is the printed Tier, so this
             also catches a mistranscribed Tier cell.
         Both are re-checked in the loader against the whole set.

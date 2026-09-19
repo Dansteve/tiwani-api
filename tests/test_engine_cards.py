@@ -144,7 +144,7 @@ def test_build_card_handles_no_strategies():
     "tier,label",
     [
         ("Full", "Taking part fully"),
-        ("Modified", "Taking part with a few adjustments"),
+        ("Adapted", "Taking part with a few adjustments"),
         ("Pivot", "Keeping things calm and steady"),
     ],
 )
@@ -256,7 +256,7 @@ def test_public_safe_content_leaves_the_non_name_fields_unchanged():
     "tier,fragment",
     [
         ("Full", "usually comfortable with this"),
-        ("Modified", "join in well with a little support"),
+        ("Adapted", "join in well with a little support"),
         ("Pivot", "a big ask for them"),
     ],
 )

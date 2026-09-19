@@ -10,10 +10,10 @@ The exact spec (section 4.8, HardRules/Api/Modules/Index.md):
     never resets.
   - Each pulse adjusts by f(outcome, the activity's recommended tier):
 
-        Outcome    Full Engagement  Modified Participation  Continuity Pivot
-        Well       +10              +7                      +5
-        Okay       +3               +5                      +3
-        Difficult  -8                0                      +2
+        Outcome    Full Engagement  Adapted (Modified)  Continuity Pivot
+        Well       +10              +7                  +5
+        Okay       +3               +5                  +3
+        Difficult  -8                0                  +2
 
     (The Pivot column was restored 2026-06-11 from the source PDF; the
     Difficult/Pivot cell is +2, POSITIVE, because the plan correctly protected the
@@ -21,7 +21,7 @@ The exact spec (section 4.8, HardRules/Api/Modules/Index.md):
   - A SKIPPED pulse adjusts by 0 (it never harms the score).
   - Bounds 0 to 100; round to the nearest whole number after each change.
 
-The tier vocabulary is the engine's Tier enum (Full/Modified/Pivot) so there is one
+The tier vocabulary is the engine's Tier enum (Full/Adapted/Pivot) so there is one
 definition of the tier across the LCE and the LCI. The outcome vocabulary is the
 Outcome enum (the app's "well"/"okay"/"difficult" wire codes plus "skipped").
 """
@@ -64,13 +64,13 @@ class Outcome(str, Enum):
 # never moves the score.
 _ADJUSTMENTS: Dict[Tuple[Outcome, Tier], int] = {
     (Outcome.WELL, Tier.FULL): 10,
-    (Outcome.WELL, Tier.MODIFIED): 7,
+    (Outcome.WELL, Tier.ADAPTED): 7,
     (Outcome.WELL, Tier.PIVOT): 5,
     (Outcome.OKAY, Tier.FULL): 3,
-    (Outcome.OKAY, Tier.MODIFIED): 5,
+    (Outcome.OKAY, Tier.ADAPTED): 5,
     (Outcome.OKAY, Tier.PIVOT): 3,
     (Outcome.DIFFICULT, Tier.FULL): -8,
-    (Outcome.DIFFICULT, Tier.MODIFIED): 0,
+    (Outcome.DIFFICULT, Tier.ADAPTED): 0,
     (Outcome.DIFFICULT, Tier.PIVOT): 2,
 }
 
@@ -81,7 +81,7 @@ _SKIPPED_ADJUSTMENT = 0
 def adjustment_for(outcome: Outcome, tier: Tier) -> int:
     """The section 4.8 score delta for one pulse: f(outcome, recommended tier).
 
-    A skipped pulse is 0 for any tier. Every Well/Okay/Difficult x Full/Modified/
+    A skipped pulse is 0 for any tier. Every Well/Okay/Difficult x Full/Adapted/
     Pivot pair is in the table, so a lookup miss is a programming error (a new
     outcome or tier added without a cell), surfaced as a KeyError rather than a
     silent 0.

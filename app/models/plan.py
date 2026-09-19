@@ -71,10 +71,22 @@ class AlsoWorkedIn(BaseModel):
 
 
 class PlanStrategy(BaseModel):
-    """One strategy in the plan's ranked list (section 4.4 step 7 output).
+    """One strategy in the plan's ranked list (section 4.4 step 7 + Fusion Layer output).
 
-    title + detail are the seeded strategy text (the source carries flat phrases,
-    so title and detail may be the same line).
+    title + detail are the strategy text (the seeded source carries flat phrases, so
+    title and detail may be the same line; a situated strategy's detail is its
+    governed situated sentence).
+
+    Provenance (LCEEngineAddendum.md section 3): every strategy carries where it came
+    from, so the Specificity Gate can tell a genuinely personalised Plan from generic
+    scenario content, and the app can group and label situated strategies:
+      - source: "scenario_base" | "dimension_transfer" | "situated_fusion".
+      - derived_from: the active profile tag code(s) that produced it (empty for
+        scenario_base and dimension_transfer; the loading tags for situated_fusion).
+      - moment: the scenario moment id a situated strategy is attached to (required for
+        situated_fusion; null otherwise).
+      - moment_label: the user-readable moment name for the app (e.g. "First assembly");
+        null unless situated_fusion.
 
     Strategy Library fields (Task 9, Product.md section 4.10):
       - library_item_id: the saved strategy_library_item id for THIS recipient + scenario,
@@ -90,6 +102,10 @@ class PlanStrategy(BaseModel):
 
     title: str
     detail: str
+    source: str = "scenario_base"
+    derived_from: List[str] = Field(default_factory=list)
+    moment: Optional[str] = None
+    moment_label: Optional[str] = None
     library_item_id: Optional[str] = None
     also_worked_in: List[AlsoWorkedIn] = Field(default_factory=list)
     also_worked_in_chapter: Optional[str] = None
@@ -104,6 +120,50 @@ class DimensionExplanations(BaseModel):
     sensory: str
     logistical: str
     human: str
+
+
+class Specificity(BaseModel):
+    """The Specificity Gate result on a Plan (LCEEngineAddendum.md section 4).
+
+    profile_derived is the count of strategies whose derived_from is non-empty;
+    situated is the count of situated_fusion strategies. complete is true only when a
+    Plan is specific enough to present as a finished Plan (profile_derived >= 2 AND
+    situated >= 1); otherwise the engine asks one enrichment question instead of
+    shipping a generic Plan. The app can use these to show a subtle specificity signal.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    profile_derived: int
+    situated: int
+    complete: bool
+
+
+class EnrichmentOption(BaseModel):
+    """One tap option for the enrichment question: a tag code + its human label."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    label: str
+
+
+class Enrichment(BaseModel):
+    """The one value-first enrichment question (LCEEngineAddendum.md section 5).
+
+    Present on a PreparationPlan ONLY when the gate did not pass and an enrichment has
+    not yet been tried: it improves the Plan now (it is not data collection). question
+    is the governed, non-clinical prompt; dimension is the highest-loading pressure
+    dimension with no confirming profile tag; options are the tags the carer can tap
+    to confirm it (the app re-calls POST /plans with the chosen codes as
+    enrichment_answer). Null once the Plan is complete or an enrichment is exhausted.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    question: str
+    dimension: str
+    options: List[EnrichmentOption]
 
 
 class PreparePlanRequest(BaseModel):
@@ -123,6 +183,13 @@ class PreparePlanRequest(BaseModel):
     date: Optional[date_type] = None
     today_flags: List[Tag] = Field(default_factory=list)
     context_note: Optional[str] = None
+    # The enrichment loop (LCEEngineAddendum.md section 5, step 13): the permanent
+    # profile tag code(s) the carer tapped in answer to an enrichment question. When
+    # present the engine PERSISTS them as the recipient's permanent tags (carer-owned,
+    # the byproduct-input model) and re-runs scoring + fusion + the gate in the SAME
+    # call. These are PERMANENT profile tags (SN-/TR-/CM-/RC-), never TG- day flags (a
+    # TG- code here is a 422); empty on a normal prepare.
+    enrichment_answer: List[Tag] = Field(default_factory=list)
 
 
 class PreparationPlan(BaseModel):
@@ -157,6 +224,16 @@ class PreparationPlan(BaseModel):
     dimension_explanations: Optional[DimensionExplanations] = None
     scheduled_pulse_at: datetime
     used_chapter_average: bool = False
+    # The Fusion Layer + Specificity Gate + enrichment (LCEEngineAddendum.md 4-6):
+    #   specificity   the gate result (profile_derived, situated, complete).
+    #   enrichment    the one value-first question, present ONLY when not complete and
+    #                 no enrichment has been tried yet; null otherwise.
+    #   getting_to_know  true when the Plan is still not complete AFTER one enrichment:
+    #                    the app shows the calm "Still getting to know [child]" state
+    #                    over the best available Plan.
+    specificity: Specificity
+    enrichment: Optional[Enrichment] = None
+    getting_to_know: bool = False
 
 
 class PlanSummary(BaseModel):

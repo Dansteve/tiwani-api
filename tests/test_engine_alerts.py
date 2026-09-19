@@ -82,7 +82,7 @@ def test_well_outcomes_and_full_activities_never_alert():
 
 
 # ---------------------------------------------------------------------------
-# L1: Modified/Pivot in >= 3 activities (30d) AND Difficult/Okay in >= 3 pulses (30d)
+# L1: Adapted/Pivot in >= 3 activities (30d) AND Difficult/Okay in >= 3 pulses (30d)
 # ---------------------------------------------------------------------------
 
 
@@ -90,7 +90,7 @@ def test_l1_fires_at_the_three_and_three_boundary():
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 3, days_ago=5),
+        activities=_activities(Tier.ADAPTED, 3, days_ago=5),
         pulses=_pulses(Outcome.OKAY, 3, days_ago=5),
         current_lci=50,
     )
@@ -101,7 +101,7 @@ def test_l1_does_not_fire_with_only_two_activities():
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 2, days_ago=5),
+        activities=_activities(Tier.ADAPTED, 2, days_ago=5),
         pulses=_pulses(Outcome.OKAY, 3, days_ago=5),
         current_lci=50,
     )
@@ -112,7 +112,7 @@ def test_l1_does_not_fire_with_only_two_pressure_pulses():
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 3, days_ago=5),
+        activities=_activities(Tier.ADAPTED, 3, days_ago=5),
         pulses=_pulses(Outcome.DIFFICULT, 2, days_ago=5),
         current_lci=50,
     )
@@ -120,13 +120,13 @@ def test_l1_does_not_fire_with_only_two_pressure_pulses():
 
 
 def test_l1_counts_modified_activities_and_difficult_pulses():
-    # The L1 tier set is Modified OR Pivot; the L1 outcome set is Difficult OR Okay.
-    # Modified activities + Difficult pulses meet L1 but NOT L3 (which needs Pivot),
+    # The L1 tier set is Adapted OR Pivot; the L1 outcome set is Difficult OR Okay.
+    # Adapted activities + Difficult pulses meet L1 but NOT L3 (which needs Pivot),
     # and with a healthy LCI it is exactly L1 (not L2: only 3 of each, not 5).
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 3, days_ago=10),
+        activities=_activities(Tier.ADAPTED, 3, days_ago=10),
         pulses=_pulses(Outcome.DIFFICULT, 3, days_ago=10),
         current_lci=45,
     )
@@ -140,8 +140,8 @@ def test_l1_ignores_activities_older_than_30_days():
 
     history = ChapterHistory(
         activities=(
-            _activities(Tier.MODIFIED, 2, days_ago=5)
-            + _activities(Tier.MODIFIED, 1, days_ago=31)
+            _activities(Tier.ADAPTED, 2, days_ago=5)
+            + _activities(Tier.ADAPTED, 1, days_ago=31)
         ),
         pulses=_pulses(Outcome.OKAY, 3, days_ago=5),
         current_lci=50,
@@ -158,7 +158,7 @@ def test_l2_fires_at_the_five_and_five_counts_boundary():
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 5, days_ago=10),
+        activities=_activities(Tier.ADAPTED, 5, days_ago=10),
         pulses=_pulses(Outcome.OKAY, 5, days_ago=10),
         current_lci=50,
     )
@@ -170,7 +170,7 @@ def test_four_and_four_is_still_only_l1():
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 4, days_ago=10),
+        activities=_activities(Tier.ADAPTED, 4, days_ago=10),
         pulses=_pulses(Outcome.OKAY, 4, days_ago=10),
         current_lci=50,
     )
@@ -229,13 +229,13 @@ def test_l3_fires_on_three_pivot_and_three_difficult_in_14_days():
 
 
 def test_l3_counts_require_pivot_not_just_modified():
-    # Modified activities do NOT count for L3 (only Pivot does). Three Modified +
+    # Adapted activities do NOT count for L3 (only Pivot does). Three Adapted +
     # three Difficult meets L1/L2-counts shape but not the L3 counts branch, and the
-    # LCI is healthy, so it is not L3. (It is L1: 3 Modified + 3 Difficult in 30d.)
+    # LCI is healthy, so it is not L3. (It is L1: 3 Adapted + 3 Difficult in 30d.)
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 3, days_ago=7),
+        activities=_activities(Tier.ADAPTED, 3, days_ago=7),
         pulses=_pulses(Outcome.DIFFICULT, 3, days_ago=7),
         current_lci=50,
     )
@@ -307,7 +307,7 @@ def test_none_lci_is_not_l3():
 
 
 def test_l3_replaces_l2_and_l1_when_all_conditions_are_met():
-    # This history meets L1 (3+ Modified/Pivot + 3+ Difficult/Okay in 30d), L2 (5+ of
+    # This history meets L1 (3+ Adapted/Pivot + 3+ Difficult/Okay in 30d), L2 (5+ of
     # each, AND a 3-week decline), AND L3 (3 Pivot + 3 Difficult in 14d, AND LCI < 30).
     # evaluate() must report the HIGHEST: L3.
     from app.engines.alerts import evaluate
@@ -326,7 +326,7 @@ def test_l2_replaces_l1_when_both_are_met():
     from app.engines.alerts import evaluate
 
     history = ChapterHistory(
-        activities=_activities(Tier.MODIFIED, 5, days_ago=10),
+        activities=_activities(Tier.ADAPTED, 5, days_ago=10),
         pulses=_pulses(Outcome.DIFFICULT, 5, days_ago=10),
         current_lci=50,
     )

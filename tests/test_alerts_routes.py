@@ -371,13 +371,13 @@ def test_dismissed_alert_does_not_return_at_the_same_level(monkeypatch):
     # An L1 was dismissed (dismissed_level 1). Conditions still only meet L1 -> the
     # alert stays hidden: the row is UPDATED (latent level tracked) but NOT re-activated
     # (dismissed stays true, so it is absent from the active list).
-    activities = [{"tier": "Modified", "created_at": _iso(5)} for _ in range(3)]
+    activities = [{"tier": "Adapted", "created_at": _iso(5)} for _ in range(3)]
     pulses = [{"outcome_code": "okay", "created_at": _iso(5)} for _ in range(3)]
     lci_rows = [
         {
             "chapter": "career",
             "outcome_code": "okay",
-            "tier_recommended": "Modified",
+            "tier_recommended": "Adapted",
             "created_at": _iso(5),
         }
         for _ in range(3)

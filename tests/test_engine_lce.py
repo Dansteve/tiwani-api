@@ -182,7 +182,7 @@ def test_determinism_same_inputs_same_output():
 
 
 # ---------------------------------------------------------------------------
-# Tier-band boundaries (section 4.4 step 6): 4-8 Full, 9-13 Modified, 14-20 Pivot
+# Tier-band boundaries (section 4.4 step 6): 4-8 Full, 9-13 Adapted, 14-20 Pivot
 # ---------------------------------------------------------------------------
 
 
@@ -201,7 +201,7 @@ def test_full_band_upper_boundary_total_8():
 
 def test_modified_band_lower_boundary_total_9():
     # Push the family-bedtime total 8 to 9 with a single +1 today flag on a dimension
-    # below the cap (TG-HUNGER +1 Temporal: 3 -> 4), crossing into Modified.
+    # below the cap (TG-HUNGER +1 Temporal: 3 -> 4), crossing into Adapted.
     result = run_engine(
         chapter="family",
         activity_code="bedtime-routine-typical-evening",
@@ -210,12 +210,12 @@ def test_modified_band_lower_boundary_total_9():
         today_flags=["TG-HUNGER"],
     )
     assert result.total == 9
-    assert result.tier == Tier.MODIFIED
+    assert result.tier == Tier.ADAPTED
 
 
 def test_modified_band_upper_boundary_total_13():
     # school parent meeting (base 4/1/3/5), SL-LOW, no tags -> total 13, top of
-    # Modified (this is the source's own tier for the scenario).
+    # Adapted (this is the source's own tier for the scenario).
     result = run_engine(
         chapter="school",
         activity_code="parent-school-meeting-conflict-or-crisis",
@@ -224,7 +224,7 @@ def test_modified_band_upper_boundary_total_13():
         today_flags=[],
     )
     assert result.total == 13
-    assert result.tier == Tier.MODIFIED
+    assert result.tier == Tier.ADAPTED
 
 
 def test_pivot_band_lower_boundary_total_14():
@@ -248,7 +248,7 @@ def test_pivot_band_lower_boundary_total_14():
 
 def test_custom_activity_uses_chapter_average_and_flags_it():
     # An unknown activity_code has no scenario row, so the engine uses the school
-    # chapter average (3/3/3/3 = 12 Modified) and marks used_chapter_average.
+    # chapter average (3/3/3/3 = 12 Adapted) and marks used_chapter_average.
     result = run_engine(
         chapter="school",
         activity_code="totally-custom-thing",
@@ -259,7 +259,7 @@ def test_custom_activity_uses_chapter_average_and_flags_it():
     assert result.used_chapter_average is True
     assert _scores(result) == {"temporal": 3, "sensory": 3, "logistical": 3, "human": 3}
     assert result.total == 12
-    assert result.tier == Tier.MODIFIED
+    assert result.tier == Tier.ADAPTED
     # The per-dimension explanations tell the Coordinator the scores are an estimate.
     assert "estimate" in result.dimension_explanations["temporal"].lower()
 

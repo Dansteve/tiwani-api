@@ -23,7 +23,7 @@ THE EXACT SEQUENCE (section 4.4, HardRules/Api/Modules/Engine.md), in order:
      Steps 3 and 4 are kept as two separate tag_contribution calls precisely so the
      +2 cap does not bleed across them.
   5. Total = sum of the four (range 4 to 20).
-  6. Tier from the total band (tier_for_total): 4 to 8 Full, 9 to 13 Modified, 14
+  6. Tier from the total band (tier_for_total): 4 to 8 Full, 9 to 13 Adapted, 14
      to 20 Pivot. The engine RECOMPUTES the tier here; it never reads a scenario's
      stored tier (that is a transcription artefact, validated to match the band).
   7. Rank strategies (strategies.rank_strategies): the scenario's seeded strategies,

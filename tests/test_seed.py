@@ -123,7 +123,7 @@ def test_every_scenario_sum_equals_the_stated_total(tables: SeedTables):
 
 
 def test_every_scenario_tier_matches_its_total_band(tables: SeedTables):
-    # 4..8 Full, 9..13 Modified, 14..20 Pivot (section 4.4 step 6). Holds for the
+    # 4..8 Full, 9..13 Adapted, 14..20 Pivot (section 4.4 step 6). Holds for the
     # five matrices with a printed Tier and the Career matrix (tier derived).
     for s in tables.scenarios:
         assert s.tier == tier_for_total(s.stated_total), (
@@ -170,7 +170,7 @@ def test_every_scenario_tier_matches_its_total_band(tables: SeedTables):
             "school",
             "parent-school-meeting-conflict-or-crisis",
             {"temporal": 4, "sensory": 1, "logistical": 3, "human": 5},
-            Tier.MODIFIED,
+            Tier.ADAPTED,
         ),
         (
             "culture",

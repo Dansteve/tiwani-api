@@ -40,13 +40,13 @@ from app.models.seed import Tier
 MAX_CARD_STRATEGIES = 5
 
 # The participation tier in plain, warm, helper-facing words. The product tier names
-# (Full Engagement / Modified Participation / Continuity Pivot, section 4.4 step 6)
+# (Full / Adapted / Pivot, section 4.4 step 6, the three routes)
 # are restated for someone new: what the tier MEANS for how they support the day, with
 # no jargon and no clinical framing. Governed copy in spirit (it is helper-facing and
 # safety-sensitive); it is run through the shared non-clinical guard at build time.
 _TIER_PLAIN_LABEL: Dict[Tier, str] = {
     Tier.FULL: "Taking part fully",
-    Tier.MODIFIED: "Taking part with a few adjustments",
+    Tier.ADAPTED: "Taking part with a few adjustments",
     Tier.PIVOT: "Keeping things calm and steady",
 }
 
@@ -57,7 +57,7 @@ _TIER_INTRO: Dict[Tier, str] = {
         "Thank you for being here. {name} is usually comfortable with this, so you "
         "can expect a good day. The notes below help you keep it that way."
     ),
-    Tier.MODIFIED: (
+    Tier.ADAPTED: (
         "Thank you for being here. {name} can join in well with a little support. "
         "The notes below are what tends to help on the day."
     ),
@@ -277,7 +277,7 @@ _PUBLIC_TIER_INTRO: Dict[Tier, str] = {
         "Thank you for being here. They are usually comfortable with this, so you "
         "can expect a good day. The notes below help you keep it that way."
     ),
-    Tier.MODIFIED: (
+    Tier.ADAPTED: (
         "Thank you for being here. They can join in well with a little support. "
         "The notes below are what tends to help on the day."
     ),

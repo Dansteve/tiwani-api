@@ -17,7 +17,7 @@ The exact thresholds (section 4.9, transcribed; the numbers are the named consta
 below):
 
   L1 Early signal:
-    Modified OR Pivot recommended in >= 3 activities in the last 30 days
+    Adapted OR Pivot recommended in >= 3 activities in the last 30 days
     AND Difficult/Okay outcomes in >= 3 pulses in the last 30 days.
 
   L2 Sustained pressure:
@@ -59,10 +59,10 @@ L3_COUNT = 3
 LCI_DECLINE_SNAPSHOTS = 3
 LCI_CRITICAL_BELOW = 30
 
-# The tiers that count as "pressure" for the activity thresholds. L1/L2 count Modified
+# The tiers that count as "pressure" for the activity thresholds. L1/L2 count Adapted
 # OR Pivot; L3 counts Pivot only. The pulse outcomes that count: L1/L2 count Difficult
 # OR Okay; L3 counts Difficult only. (Well is never a pressure signal.)
-_L1_L2_TIERS = (Tier.MODIFIED, Tier.PIVOT)
+_L1_L2_TIERS = (Tier.ADAPTED, Tier.PIVOT)
 _L3_TIERS = (Tier.PIVOT,)
 _L1_L2_OUTCOMES = (Outcome.DIFFICULT, Outcome.OKAY)
 _L3_OUTCOMES = (Outcome.DIFFICULT,)
@@ -148,7 +148,7 @@ def evaluate(history: ChapterHistory, *, now: datetime) -> Optional[AlertLevel]:
 
 
 def _meets_l1(history: ChapterHistory, *, now: datetime) -> bool:
-    """L1: Modified/Pivot in >= 3 activities (30d) AND Difficult/Okay in >= 3 pulses (30d)."""
+    """L1: Adapted/Pivot in >= 3 activities (30d) AND Difficult/Okay in >= 3 pulses (30d)."""
     pressure_activities = _count_activities(history.activities, _L1_L2_TIERS, WINDOW_30_DAYS, now)
     pressure_pulses = _count_pulses(history.pulses, _L1_L2_OUTCOMES, WINDOW_30_DAYS, now)
     return pressure_activities >= L1_COUNT and pressure_pulses >= L1_COUNT
@@ -157,7 +157,7 @@ def _meets_l1(history: ChapterHistory, *, now: datetime) -> bool:
 def _meets_l2(history: ChapterHistory, *, now: datetime) -> bool:
     """L2: the L1 thresholds at >= 5 in 30 days, OR the chapter LCI declining 3 weekly snapshots.
 
-    The two branches are an OR (section 4.9): either the same Modified/Pivot-and-
+    The two branches are an OR (section 4.9): either the same Adapted/Pivot-and-
     Difficult/Okay counts both reach 5 in the 30-day window, or the chapter LCI has
     declined across 3 consecutive weekly snapshots.
     """

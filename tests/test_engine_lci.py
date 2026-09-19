@@ -6,7 +6,7 @@ number so a change cannot drift silently. They exercise the PURE engine
 in). Pinned here:
   - all twelve outcome-by-tier adjustment cells + the skipped-is-0 rule;
   - start at 50 on a chapter's first pulse, cumulative never reset;
-  - the mandate's worked sequences (Well/Modified -> 57; 50 -> 42 -> 52 -> 57);
+  - the mandate's worked sequences (Well/Adapted -> 57; 50 -> 42 -> 52 -> 57);
   - Difficult under a Pivot recommendation is POSITIVE (+2);
   - the 0 and 100 bounds with rounding;
   - the overall average over chapters WITH a pulse only (no-data excluded), weighted
@@ -53,13 +53,13 @@ def _pulse(outcome: Outcome, tier: Tier, day: int = 1) -> PulsePoint:
 # (outcome, tier) -> the exact section 4.8 delta. All twelve cells, pinned.
 ADJUSTMENT_CELLS = [
     (Outcome.WELL, Tier.FULL, 10),
-    (Outcome.WELL, Tier.MODIFIED, 7),
+    (Outcome.WELL, Tier.ADAPTED, 7),
     (Outcome.WELL, Tier.PIVOT, 5),
     (Outcome.OKAY, Tier.FULL, 3),
-    (Outcome.OKAY, Tier.MODIFIED, 5),
+    (Outcome.OKAY, Tier.ADAPTED, 5),
     (Outcome.OKAY, Tier.PIVOT, 3),
     (Outcome.DIFFICULT, Tier.FULL, -8),
-    (Outcome.DIFFICULT, Tier.MODIFIED, 0),
+    (Outcome.DIFFICULT, Tier.ADAPTED, 0),
     (Outcome.DIFFICULT, Tier.PIVOT, 2),
 ]
 
@@ -69,7 +69,7 @@ def test_adjustment_table_every_cell(outcome, tier, expected):
     assert adjustment_for(outcome, tier) == expected
 
 
-@pytest.mark.parametrize("tier", [Tier.FULL, Tier.MODIFIED, Tier.PIVOT])
+@pytest.mark.parametrize("tier", [Tier.FULL, Tier.ADAPTED, Tier.PIVOT])
 def test_skipped_pulse_is_zero_for_every_tier(tier):
     # A skipped pulse never moves the score, whatever the stored tier (section 4.8).
     assert adjustment_for(Outcome.SKIPPED, tier) == 0
@@ -88,16 +88,16 @@ def test_difficult_under_pivot_is_positive():
 
 
 def test_first_pulse_starts_at_50_then_adjusts():
-    # A fresh chapter's first pulse: Well on a Modified activity -> 50 + 7 = 57.
-    assert chapter_score([_pulse(Outcome.WELL, Tier.MODIFIED)]) == 57
+    # A fresh chapter's first pulse: Well on a Adapted activity -> 50 + 7 = 57.
+    assert chapter_score([_pulse(Outcome.WELL, Tier.ADAPTED)]) == 57
 
 
 def test_cumulative_sequence_never_resets():
-    # 50 -> Difficult/Full (-8) = 42 -> Well/Full (+10) = 52 -> Okay/Modified (+5) = 57.
+    # 50 -> Difficult/Full (-8) = 42 -> Well/Full (+10) = 52 -> Okay/Adapted (+5) = 57.
     seq = [
         _pulse(Outcome.DIFFICULT, Tier.FULL, 1),
         _pulse(Outcome.WELL, Tier.FULL, 2),
-        _pulse(Outcome.OKAY, Tier.MODIFIED, 3),
+        _pulse(Outcome.OKAY, Tier.ADAPTED, 3),
     ]
     assert chapter_score(seq) == 57
 
@@ -107,7 +107,7 @@ def test_fold_is_independent_of_input_order():
     ordered = [
         _pulse(Outcome.DIFFICULT, Tier.FULL, 1),
         _pulse(Outcome.WELL, Tier.FULL, 2),
-        _pulse(Outcome.OKAY, Tier.MODIFIED, 3),
+        _pulse(Outcome.OKAY, Tier.ADAPTED, 3),
     ]
     shuffled = [ordered[2], ordered[0], ordered[1]]
     assert chapter_score(shuffled) == chapter_score(ordered) == 57

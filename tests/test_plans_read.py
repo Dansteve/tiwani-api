@@ -81,7 +81,7 @@ SUMMARY_ROWS = [
         "id": "act-new-travel",
         "chapter": "travel",
         "activity_name": "Train journey: short",
-        "tier": "Modified",
+        "tier": "Adapted",
         "total": 11,
         "scheduled_pulse_at": "2026-06-20T09:00:00+00:00",  # future => not due
         "created_at": "2026-06-11T09:00:00+00:00",
@@ -282,7 +282,7 @@ def test_list_stored_plans_newest_first_with_pulse_status(monkeypatch):
     assert by_id["act-social"].pulse_due is False
 
     # The stored score is carried verbatim (no engine run).
-    assert by_id["act-new-travel"].tier == Tier.MODIFIED
+    assert by_id["act-new-travel"].tier == Tier.ADAPTED
     assert by_id["act-new-travel"].total == 11
 
 

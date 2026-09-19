@@ -18,14 +18,36 @@ Layout:
                    cross-context hook.
   explanations.py  section 4.4 step 10 per-dimension non-clinical sentences.
   engine.py        run_engine: the section 4.4 steps 1 to 7 + 10, pure.
+  fusion.py        the Fusion Layer + Specificity Gate + enrichment (LCEEngineAddendum.md
+                   steps 9 to 13): situated strategies per scenario moment, the gate
+                   (profile_derived >= 2 AND situated >= 1), and the value-first
+                   enrichment question. Pure; reads moments + governed copy from the seed.
 
 Steps 8 (store the activity_record + confirm the write) and 9 (schedule the Pulse)
 are the persistence/clock steps and live in app/services/plans.py, which calls
-run_engine. Step 11 (recompute the LCI + evaluate alerts on Pulse completion) is
-Tasks 6/7.
+run_engine and the Fusion Layer. Step 11 (recompute the LCI + evaluate alerts on
+Pulse completion) is Tasks 6/7.
 """
 
 from app.engines.lce.engine import EngineResult, run_engine
+from app.engines.lce.fusion import (
+    Enrichment,
+    FusedStrategy,
+    Specificity,
+    build_enrichment,
+    compute_specificity,
+    run_fusion,
+)
 from app.engines.lce.strategies import RankedStrategy
 
-__all__ = ["run_engine", "EngineResult", "RankedStrategy"]
+__all__ = [
+    "run_engine",
+    "EngineResult",
+    "RankedStrategy",
+    "run_fusion",
+    "FusedStrategy",
+    "Specificity",
+    "Enrichment",
+    "compute_specificity",
+    "build_enrichment",
+]

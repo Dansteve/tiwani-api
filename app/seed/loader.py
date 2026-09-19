@@ -16,7 +16,7 @@ row can never reach the engine:
   - THE TRANSCRIPTION GUARD: every scenario's four cells SUM to the Total printed in
     the source matrix (stated_total); a mistyped cell stops the sum matching and the
     load fails with the offending scenario name;
-  - every scenario's tier matches its total band (4..8 Full, 9..13 Modified, 14..20
+  - every scenario's tier matches its total band (4..8 Full, 9..13 Adapted, 14..20
     Pivot; the Career matrix tier is derived from the band, the rest are the printed
     Tier, so this also catches a mistranscribed Tier cell);
   - every chapter in the six fixed set (Chapter enum) is present with at least the
@@ -73,6 +73,7 @@ from app.models.seed import (
     MIN_TOTAL,
     BaseScores,
     Dimension,
+    ScenarioMoment,
     ScenarioRow,
     ScenarioStrategy,
     TagModifierRow,
@@ -163,6 +164,17 @@ class SeedTables:
             return []
         return sorted(row.strategies, key=lambda s: s.rank)
 
+    # --- Fusion Layer: scenario moments (LCEEngineAddendum.md section 1) ------
+    def get_moments(self, chapter: str, activity_code: str) -> List[ScenarioMoment]:
+        """The scenario's ordered moments (empty for a custom or moment-less one).
+
+        The Fusion Layer reads these to emit situated strategies. An empty list means
+        the scenario has no moments authored yet (Wave 2 completes them), so it simply
+        produces no situated strategies.
+        """
+        row = self._by_key.get((chapter, activity_code))
+        return list(row.moments) if row else []
+
     # --- LCE step 3: tag contribution with the +2-per-dimension cap ----------
     def tag_contribution(self, tag_codes: List[str]) -> Dict[Dimension, int]:
         """Sum the given tags' modifiers per dimension, capped at +2 per dimension.
@@ -197,6 +209,7 @@ def load_seed() -> SeedTables:
     _validate_scenarios(scenarios)
     _validate_tag_modifiers(tag_modifiers)
     _validate_non_clinical(scenarios, tag_modifiers)
+    _validate_situated_copy()
 
     by_key: Dict[Tuple[str, str], ScenarioRow] = {}
     by_chapter: Dict[str, List[ScenarioRow]] = defaultdict(list)
@@ -287,12 +300,66 @@ def _validate_scenarios(scenarios: List[ScenarioRow]) -> None:
                 f"scenario '{row.activity_code}' has no strategies (orphan scenario)"
             )
 
+        # Scenario moments (LCEEngineAddendum.md section 1): moment ids unique within
+        # the scenario, and every loaded tag code is in the taxonomy (the Fusion Layer
+        # matches active profile tags against these loads, so an unknown code would be
+        # a silent no-match). Moments are optional; an empty list is fine.
+        _validate_moments(row)
+
     # Every fixed chapter present with the minimum number of scenarios.
     for chapter in valid_chapters:
         if counts.get(chapter, 0) < MIN_SCENARIOS_PER_CHAPTER:
             raise SeedValidationError(
                 f"chapter '{chapter}' has {counts.get(chapter, 0)} scenarios, "
                 f"fewer than the minimum {MIN_SCENARIOS_PER_CHAPTER}"
+            )
+
+
+def _validate_moments(row: ScenarioRow) -> None:
+    """Hard-fail checks for one scenario's moments (LCEEngineAddendum.md section 1).
+
+    Moments are optional. When present: each moment id is unique within the scenario
+    (the id is the moment TYPE the situated template keys on), and every loaded tag
+    code is a defined tag in the taxonomy (an unknown code would silently never match
+    an active profile tag). The modifier VALUES stay in the Tag Architecture; loads
+    only name which tags concentrate in the moment.
+    """
+    if not row.moments:
+        return
+    valid_codes = _valid_tag_codes()
+    seen_ids: set = set()
+    for moment in row.moments:
+        if moment.id in seen_ids:
+            raise SeedValidationError(
+                f"scenario '{row.activity_code}' has duplicate moment id '{moment.id}'"
+            )
+        seen_ids.add(moment.id)
+        for code in moment.loads:
+            if code not in valid_codes:
+                raise SeedValidationError(
+                    f"scenario '{row.activity_code}' moment '{moment.id}' loads "
+                    f"unknown tag code '{code}'"
+                )
+
+
+def _validate_situated_copy() -> None:
+    """Hard-fail if any situated-strategy / enrichment copy uses a clinical word.
+
+    The Fusion Layer's situated-strategy templates and the enrichment questions are new
+    care-adjacent, user-facing copy (LCEEngineAddendum.md governed-copy note). This runs
+    them through the SAME shared non-clinical guard the alert + Continuity Card builders
+    use (Product.md section 4.9), so a future copy edit cannot slip a prohibited clinical
+    word past the seed load. (Psychiatrist copy sign-off still gates production, Task 12.)
+    """
+    from app.seed.situated_templates_v1 import all_copy_strings
+
+    for text in all_copy_strings():
+        found = find_prohibited_words(text)
+        if found:
+            raise SeedValidationError(
+                f"situated-strategy / enrichment copy uses prohibited clinical words "
+                f"{found!r} in {text!r}: care-adjacent copy signposts and reassures "
+                "only, no clinical vocabulary (Product.md section 4.9)."
             )
 
 

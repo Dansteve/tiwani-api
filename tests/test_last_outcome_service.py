@@ -205,7 +205,7 @@ def _seed_strategy(
 def test_returns_the_most_recent_prior_outcome(patched, store):
     aid_old = _seed_pulse(store, outcome="difficult", tier="Full", created_at=_iso(2026, 5, 1))
     aid_new = _seed_pulse(
-        store, outcome="okay", tier="Modified", challenge="human", created_at=_iso(2026, 6, 1)
+        store, outcome="okay", tier="Adapted", challenge="human", created_at=_iso(2026, 6, 1)
     )
     _seed_activity(store, aid_old, name="Old day")
     _seed_activity(store, aid_new, name="Assembly")
@@ -215,7 +215,7 @@ def test_returns_the_most_recent_prior_outcome(patched, store):
     assert result is not None
     # The NEWER pulse is recalled (its stored fields are carried verbatim, never re-derived).
     assert result.outcome_code == "okay"
-    assert result.tier_recommended == "Modified"
+    assert result.tier_recommended == "Adapted"
     assert result.challenge_dimension == "human"
     assert result.activity_name == "Assembly"
     assert result.chapter == "school"
@@ -332,7 +332,7 @@ def test_worked_strategy_read_failure_falls_open(patched, store, monkeypatch):
         ("okay", "Pivot", True),  # positive under Pivot
         ("difficult", "Pivot", True),  # §4.8: Difficult under Pivot is positive (plan protected)
         ("well", "Full", False),  # not Pivot
-        ("okay", "Modified", False),  # not Pivot
+        ("okay", "Adapted", False),  # not Pivot
         ("difficult", "Full", False),  # negative, not Pivot
     ],
 )
