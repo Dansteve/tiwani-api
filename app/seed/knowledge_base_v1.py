@@ -103,6 +103,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Same breakfast and route daily",
             "Low-demand conversation until out of door",
         ),
+        moments=[
+            ScenarioMoment(
+                id="getting_ready",
+                label="Waking and getting dressed",
+                loads=["TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="breakfast",
+                label="Breakfast",
+                loads=["SN-TASTE"],
+            ),
+            ScenarioMoment(
+                id="out_the_door",
+                label="Heading out the door",
+                loads=["TR-LOC"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -119,6 +136,28 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Sensory regulation support before leaving",
             "Consider delayed start if school can accommodate",
         ),
+        moments=[
+            ScenarioMoment(
+                id="settling",
+                label="Settling a rocky start",
+                loads=["SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="getting_ready",
+                label="Getting dressed and ready",
+                loads=["TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="flexing_the_plan",
+                label="Flexing the plan for a later start",
+                loads=["TR-CHANGE"],
+            ),
+            ScenarioMoment(
+                id="out_the_door",
+                label="Getting out the door",
+                loads=["TR-LOC"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -135,6 +174,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Parent decompression before starting work",
             "Named staff member receives child",
         ),
+        moments=[
+            ScenarioMoment(
+                id="at_the_gate",
+                label="Arriving at the gate",
+                loads=["SN-CROWD", "TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="saying_goodbye",
+                label="Saying goodbye",
+                loads=["TR-END"],
+            ),
+            ScenarioMoment(
+                id="going_in",
+                label="Being handed over to staff",
+                loads=["TR-SWITCH"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -151,6 +207,28 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Do not force, activate school's agreed alternative",
             "Parent self-care protocol for high-distress drop-offs",
         ),
+        moments=[
+            ScenarioMoment(
+                id="at_the_gate",
+                label="Arriving when it is already hard",
+                loads=["SN-CROWD", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="the_separation",
+                label="The separation itself",
+                loads=["TR-END", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="stepping_back",
+                label="Stepping back to the agreed plan",
+                loads=["TR-CHANGE"],
+            ),
+            ScenarioMoment(
+                id="afterwards",
+                label="Winding down afterwards",
+                loads=["RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -166,6 +244,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Sensory comfort item in bag",
             "Predictable collection point",
         ),
+        moments=[
+            ScenarioMoment(
+                id="boarding",
+                label="Getting on",
+                loads=["TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="the_journey",
+                label="The journey",
+                loads=["SN-NOISE", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="arriving",
+                label="Arriving at school",
+                loads=["TR-SWITCH"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -214,6 +309,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Staff escort if needed",
             "Fidget or comfort item for transition periods",
         ),
+        moments=[
+            ScenarioMoment(
+                id="ending_the_lesson",
+                label="Wrapping up the current lesson",
+                loads=["TR-END"],
+            ),
+            ScenarioMoment(
+                id="moving_between",
+                label="Moving between spaces",
+                loads=["TR-LOC", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="settling_next",
+                label="Settling into the next activity",
+                loads=["TR-SWITCH"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -262,6 +374,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Familiar face to meet child at gate",
             "Updated Continuity Card if anything has changed",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arriving_back",
+                label="Arriving back at the gate",
+                loads=["SN-CROWD", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="back_into_class",
+                label="Settling back into class",
+                loads=["TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="winding_down",
+                label="Winding down after the first day back",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -278,6 +407,33 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Reduced expectation first week",
             "Parent-school communication plan agreed in advance",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arrival",
+                label="Arrival and the playground",
+                loads=["SN-CROWD", "SN-NOISE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="assembly",
+                label="First assembly",
+                loads=["SN-NOISE", "SN-LIGHT", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="lining_up",
+                label="Lining up and registration",
+                loads=["TR-WAIT", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="cloakroom",
+                label="Cloakroom to classroom",
+                loads=["TR-LOC", "TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="end_of_day",
+                label="Collection and decompression",
+                loads=["RC-MOD", "TR-SWITCH"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -293,6 +449,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Sensory regulation strategy available",
             "Named adult to check in with child during transition",
         ),
+        moments=[
+            ScenarioMoment(
+                id="finding_out",
+                label="Finding out the plan has changed",
+                loads=["TR-CHANGE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="the_new_setup",
+                label="A different teacher or room",
+                loads=["SN-UNPRED", "TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="staying_settled",
+                label="Staying settled through the change",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -308,6 +481,18 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Request written follow-up after meeting",
             "Bring a support person if needed",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_wait",
+                label="Waiting for the meeting",
+                loads=["TR-WAIT"],
+            ),
+            ScenarioMoment(
+                id="afterwards",
+                label="Winding down afterwards",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="school",
@@ -324,6 +509,23 @@ SCHOOL_SCENARIOS: List[ScenarioRow] = [
             "Request independent support if needed; IPSEA, SENDIASS",
             "Allow decompression time after meeting",
         ),
+        moments=[
+            ScenarioMoment(
+                id="getting_there",
+                label="Getting there",
+                loads=["TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="the_wait",
+                label="Waiting for a tense meeting",
+                loads=["TR-WAIT", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="afterwards",
+                label="Decompression afterwards",
+                loads=["RC-EXT"],
+            ),
+        ],
     ),
 ]
 
@@ -1209,6 +1411,23 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Parent nearby but not hovering",
             "Clear end signal agreed in advance",
         ),
+        moments=[
+            ScenarioMoment(
+                id="warming_up",
+                label="Warming up at the start",
+                loads=["SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="playing_together",
+                label="Playing together",
+                loads=["TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="goodbye",
+                label="Ending and goodbye",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1225,6 +1444,28 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Parent present throughout",
             "Exit phrase prepared",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arriving",
+                label="Arriving somewhere new",
+                loads=["TR-LOC", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="meeting_them",
+                label="Meeting an unfamiliar child",
+                loads=["SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="playing_together",
+                label="Playing together",
+                loads=["TR-SWITCH"],
+            ),
+            ScenarioMoment(
+                id="heading_home",
+                label="Ending and heading home",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1280,6 +1521,33 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Parent stays throughout",
             "Success defined as: child attended, not child enjoyed every minute",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arrival",
+                label="Arrival",
+                loads=["SN-CROWD", "SN-NOISE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="the_thick_of_it",
+                label="The busiest part",
+                loads=["SN-NOISE", "SN-LIGHT", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="food_and_cake",
+                label="Food and cake",
+                loads=["SN-TASTE", "SN-SMELL", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="a_quiet_break",
+                label="A quiet break",
+                loads=["RC-MOD"],
+            ),
+            ScenarioMoment(
+                id="leaving",
+                label="Leaving and wind-down",
+                loads=["TR-END", "RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1295,6 +1563,23 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Quiet retreat space identified",
             "Duration limited, leave before child is exhausted",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arriving",
+                label="Arriving and hellos",
+                loads=["SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="the_meal",
+                label="The meal",
+                loads=["SN-TASTE", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="a_quiet_break",
+                label="A quiet break",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1312,6 +1597,33 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Child's comfort items brought",
             "Permission given explicitly to leave without explanation",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arriving",
+                label="Arriving and greetings",
+                loads=["SN-CROWD", "SN-NOISE"],
+            ),
+            ScenarioMoment(
+                id="hellos_and_hugs",
+                label="Hellos and hugs",
+                loads=["SN-TOUCH", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="the_meal",
+                label="The meal",
+                loads=["SN-TASTE", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="quiet_retreat",
+                label="A quiet retreat",
+                loads=["RC-MOD"],
+            ),
+            ScenarioMoment(
+                id="leaving",
+                label="Leaving and wind-down",
+                loads=["TR-END", "RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1327,6 +1639,23 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Sensory kit available",
             "Clear exit plan",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arriving",
+                label="Arriving",
+                loads=["SN-CROWD", "TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="during_the_event",
+                label="During the event",
+                loads=["SN-NOISE", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="heading_off",
+                label="Heading off",
+                loads=["TR-END", "RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1344,6 +1673,33 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Short duration planned, not full day",
             "Modified participation, part of event only",
         ),
+        moments=[
+            ScenarioMoment(
+                id="getting_in",
+                label="Getting in and queues",
+                loads=["SN-CROWD", "TR-WAIT"],
+            ),
+            ScenarioMoment(
+                id="crowds_and_noise",
+                label="The crowds and noise",
+                loads=["SN-NOISE", "SN-CROWD", "SN-LIGHT"],
+            ),
+            ScenarioMoment(
+                id="food_stalls",
+                label="Food stalls",
+                loads=["SN-SMELL", "SN-TASTE"],
+            ),
+            ScenarioMoment(
+                id="quiet_zone",
+                label="The quiet zone",
+                loads=["RC-MOD"],
+            ),
+            ScenarioMoment(
+                id="leaving",
+                label="Leaving and wind-down",
+                loads=["TR-END", "RC-EXT"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1392,6 +1748,28 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Safe food backup carried",
             "Short visit planned, not extended dining",
         ),
+        moments=[
+            ScenarioMoment(
+                id="arriving_and_seated",
+                label="Arriving and being seated",
+                loads=["SN-CROWD", "SN-NOISE", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="waiting_for_food",
+                label="Waiting for food",
+                loads=["TR-WAIT", "SN-SMELL"],
+            ),
+            ScenarioMoment(
+                id="the_meal",
+                label="The meal",
+                loads=["SN-TASTE", "SN-TEXTURE"],
+            ),
+            ScenarioMoment(
+                id="heading_home",
+                label="Winding down afterwards",
+                loads=["RC-MOD"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1407,6 +1785,23 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Visual journey timer",
             "Off-peak where possible",
         ),
+        moments=[
+            ScenarioMoment(
+                id="waiting_to_board",
+                label="Waiting to board",
+                loads=["TR-WAIT", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="the_journey",
+                label="The journey",
+                loads=["SN-NOISE", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="our_stop",
+                label="Getting off at our stop",
+                loads=["TR-SWITCH", "TR-LOC"],
+            ),
+        ],
     ),
     ScenarioRow(
         chapter="social",
@@ -1422,6 +1817,28 @@ SOCIAL_SCENARIOS: List[ScenarioRow] = [
             "Sensory preparation",
             "Arrival buffer time built in",
         ),
+        moments=[
+            ScenarioMoment(
+                id="the_wait",
+                label="Waiting and working out the route",
+                loads=["TR-WAIT", "SN-UNPRED"],
+            ),
+            ScenarioMoment(
+                id="busy_boarding",
+                label="A busy boarding",
+                loads=["SN-CROWD", "TR-LOC"],
+            ),
+            ScenarioMoment(
+                id="the_journey",
+                label="The journey",
+                loads=["SN-NOISE", "SN-CROWD"],
+            ),
+            ScenarioMoment(
+                id="finding_our_stop",
+                label="Finding our stop",
+                loads=["TR-SWITCH", "SN-UNPRED"],
+            ),
+        ],
     ),
 ]
 
