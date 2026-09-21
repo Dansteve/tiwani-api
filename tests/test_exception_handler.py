@@ -82,9 +82,10 @@ def test_unhandled_exception_returns_governed_500_with_no_internals(caplog):
 
 
 def test_unhandled_exception_500_carries_cors_header_for_an_allowed_origin():
-    """A genuine 500 must stay READABLE cross-origin. The catch-all sits OUTSIDE CORSMiddleware, so it
-    echoes an allowed Origin itself; otherwise the browser reports a real 500 (e.g. a transient Supabase
-    outage) as a CORS block instead of the governed 'try again'. A disallowed origin is never echoed."""
+    """A genuine 500 must stay READABLE cross-origin. The catch-all sits OUTSIDE
+    CORSMiddleware, so it echoes an allowed Origin itself; otherwise the browser reports a
+    real 500 (e.g. a transient Supabase outage) as a CORS block instead of the governed 'try
+    again'. A disallowed origin is never echoed."""
 
     async def _boom() -> None:
         raise RuntimeError("boom")
@@ -102,7 +103,8 @@ def test_unhandled_exception_500_carries_cors_header_for_an_allowed_origin():
             if getattr(route, "path", None) != _BOOM_PATH
         ]
 
-    # The 500 stays readable for an allowed origin (the header echoes that origin, with credentials).
+    # The 500 stays readable for an allowed origin (the header echoes that origin, with
+    # credentials).
     assert allowed_resp.status_code == 500
     assert allowed_resp.headers.get("access-control-allow-origin") == allowed
     assert allowed_resp.headers.get("access-control-allow-credentials") == "true"
